@@ -9,7 +9,7 @@ from app.models.domain import MatchSummary, MatchDetail
 from app.repositories.synthetic import data, get_fixture, team, players, h2h, form, events
 from app.forecasting.poisson import forecast
 from app.agents.diagnostics import event, start_request
-from app.public_access import PublicAccessError, supported_public_match, verify_access_guid
+from app.public_access import PublicAccessError, reserve_foundry_attempt, supported_public_match, verify_access_guid
 router = APIRouter(prefix="/api")
 _analysis_requests: dict[str, deque[float]] = defaultdict(deque)
 def _check_analysis_limit(request: Request) -> None:
@@ -57,7 +57,10 @@ async def analysis(request: Request, payload: AnalysisRequest):
             verify_access_guid(payload.access_guid)
             if not supported_public_match(payload.match_id):
                 raise HTTPException(status_code=400, detail="Microsoft Foundry Live is currently limited to the verified match fixture.")
-        result = await run_analysis(payload)
+            with reserve_foundry_attempt():
+                result = await run_analysis(payload)
+        else:
+            result = await run_analysis(payload)
         event("api_request_completed", status="success")
         return result
     except FoundryConfigurationError as exc:

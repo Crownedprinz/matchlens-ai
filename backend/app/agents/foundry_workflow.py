@@ -68,7 +68,7 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
     except ImportError as exc: raise FoundryConfigurationError("Install requirements-foundry.txt to use AGENT_MODE=foundry") from exc
     from app.agents.foundry_tools import FOUNDRY_FUNCTIONS
     http_timeout=float(os.getenv("FOUNDRY_TIMEOUT_SECONDS","60"))
-    validation_retries=int(os.getenv("FOUNDRY_VALIDATION_RETRIES", "1"))
+    validation_retries=int(os.getenv("FOUNDRY_VALIDATION_RETRIES", "0"))
     if validation_retries < 0:
         raise FoundryConfigurationError("FOUNDRY_VALIDATION_RETRIES must be zero or greater")
     credential=_foundry_credential(); common={"project_endpoint":cfg["endpoint"],"credential":credential,"timeout":http_timeout}
