@@ -135,6 +135,49 @@ def repair_investigator_instructions(instructions: str) -> str:
         repaired = repaired.replace(old, new)
     return repaired
 
+def repair_predictor_instructions(instructions: str) -> str:
+    """Return a read-only corrected prompt with the local PredictionHandoff contract."""
+    start = instructions.find("# Output Format")
+    end = instructions.find("# Core Principle", start)
+    if start < 0 or end < 0:
+        raise ValueError("Predictor instructions do not contain the expected output sections")
+    replacement = '''# Output Format
+
+Return exactly one JSON object with exactly these three top-level keys:
+
+- forecast
+- player_projections
+- unsupported_scenarios
+
+The response must not contain status, match_id, model_version, forecast_timestamp, scoreline_probabilities, scenario_comparisons, model_drivers, uncertainty, evidence_references, or any other top-level keys.
+
+`forecast` must be the complete, unmodified result returned by `predict_match`, including:
+
+- minute
+- current_home_score
+- current_away_score
+- expected_home_goals
+- expected_away_goals
+- home_win_probability
+- draw_probability
+- away_win_probability
+- most_likely_scores, as an array of objects with home, away, and probability
+- explanation, as the returned array of strings
+
+`player_projections` must be an array of complete, unmodified `predict_player` results. Every item must contain exactly these five fields: player_id, player_name, projected_goals, projected_assists, and basis. The basis field is required and must be copied from the tool result. If no supported player projection was requested or returned, use an empty array; never fabricate a player projection or placeholder value.
+
+`unsupported_scenarios` must be an array of strings describing requested scenario calculations that the registered tools do not support. Use an empty array when no unsupported scenario was requested. Do not create scenario comparisons or substitute estimates.
+
+# Output Requirements
+
+- Return valid JSON without Markdown fences or additional explanatory text.
+- Preserve every tool-returned field and numerical value without renaming, flattening, rounding, or omission.
+- Do not add any top-level field beyond the three keys above.
+- Do not fabricate missing values, statistics, evidence references, or model metadata.
+
+'''
+    return instructions[:start] + replacement + instructions[end:]
+
 def client():
     try:
         from azure.ai.projects import AIProjectClient

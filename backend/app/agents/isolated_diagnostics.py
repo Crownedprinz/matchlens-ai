@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import re
+import json
 from typing import Any
 
-from app.agents.contracts import EvidenceItem, Forecast, InsightHandoff, InvestigatorHandoff, PredictionHandoff, ToolCall
+from pydantic import ValidationError
+from app.agents.contracts import EvidenceItem, Forecast, InsightHandoff, InvestigatorHandoff, PlayerProjection, PredictionHandoff, ToolCall
 from app.repositories.synthetic import form, get_fixture, h2h, players
 
 
@@ -25,6 +27,22 @@ def build_investigator_handoff(match_id: str) -> InvestigatorHandoff:
         for player in players(fixture.home_team_id) + players(fixture.away_team_id)
     )
     return InvestigatorHandoff(evidence=evidence, missing_information=["Market odds and official lineup data are not in the synthetic dataset."])
+
+
+def parse_prediction_handoff(text: str) -> PredictionHandoff:
+    """Require the exact nested backend contract before numerical reconciliation."""
+    try:
+        value = json.loads(text)
+        if set(value) != {"forecast", "player_projections", "unsupported_scenarios"}:
+            raise ValueError("PredictionHandoff must have exactly forecast, player_projections, unsupported_scenarios")
+        if set(value["forecast"]) != set(Forecast.model_fields):
+            raise ValueError("PredictionHandoff.forecast must preserve the complete predict_match result")
+        for projection in value["player_projections"]:
+            if set(projection) != set(PlayerProjection.model_fields):
+                raise ValueError("PredictionHandoff player projections must preserve all five predict_player fields")
+        return PredictionHandoff.model_validate(value)
+    except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+        raise ValueError(f"Invalid PredictionHandoff payload: {exc}") from exc
 
 
 def _numbers(text: str) -> list[tuple[str, float]]:

@@ -16,9 +16,9 @@ from app.agents import tools
 from app.agents.contracts import AnalysisRequest, PlayerPredictionArgs, PredictionArgs, PredictionHandoff
 from app.agents.diagnostics import event, start_request
 from app.agents.foundry_workflow import FoundryResponseError, _result_text
-from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, required_tool_verification
+from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, parse_prediction_handoff, required_tool_verification
 from app.agents.provenance import agent_context, begin, calls, execute
-from app.agents.validation import parse_json, validate_evidence
+from app.agents.validation import validate_evidence
 from app.repositories.synthetic import players
 
 
@@ -51,7 +51,7 @@ async def run_once(end_to_end_timeout: float, http_timeout: float) -> None:
             event("agent_invocation_failed", agent_name=name, agent_version=version, stage="predictor-diagnostic", failure_class="transport_or_tool_or_timeout", error_type=type(exc).__name__, latency_ms=round((time.perf_counter() - started) * 1000))
             raise FoundryResponseError(f"predictor invocation failed: {type(exc).__name__}: {exc}") from exc
         event("sdk_http_response_received", agent_name=name, agent_version=version, stage="predictor-diagnostic", status="sdk_response_received", latency_ms=round((time.perf_counter() - started) * 1000))
-        prediction = parse_json(_result_text(result), PredictionHandoff)
+        prediction = parse_prediction_handoff(_result_text(result))
         real_calls = [call for call in calls() if call.agent_name == name and call.agent_version == version]
         required_tools = {"predict_match", "predict_player", "get_model_explanation"}
         missing_tools = required_tool_verification(real_calls, name, version)

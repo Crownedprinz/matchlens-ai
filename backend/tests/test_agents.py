@@ -11,10 +11,10 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
-from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, required_tool_verification
+from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
-from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, tool_schema, proposed
+from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_predictor_instructions, tool_schema, proposed
 from app.repositories.synthetic import get_fixture
 client = TestClient(app)
 def test_tools_validate_and_use_real_data():
@@ -191,6 +191,33 @@ def test_simulated_predictor_response_is_validated_and_reconciled():
             return type("Result", (), {"text": json.dumps({"forecast": canonical, "player_projections": [], "unsupported_scenarios": []})})()
     parsed=asyncio.run(_text(PredictorAgent(), {"canonical_python_forecast":canonical}, lambda text: __import__("app.agents.validation", fromlist=["parse_json"]).parse_json(text, PredictionHandoff), "predictor", "matchlens-predictor", "5", http_timeout=60))
     reconcile_forecast(parsed.forecast.model_dump(), canonical)
+
+def test_prediction_contract_rejects_old_flat_output():
+    with pytest.raises(ValueError, match="exactly forecast"):
+        parse_prediction_handoff(json.dumps({"status":"success", "home_win_probability":50, "player_projections":[], "scenario_comparisons":[]}))
+
+def test_prediction_contract_rejects_missing_forecast():
+    with pytest.raises(ValueError, match="exactly forecast"):
+        parse_prediction_handoff(json.dumps({"player_projections":[], "unsupported_scenarios":[]}))
+
+def test_prediction_contract_rejects_missing_player_basis():
+    canonical=predict_match(PredictionArgs(match_id="match-001"))
+    with pytest.raises(ValueError, match="all five"):
+        parse_prediction_handoff(json.dumps({"forecast":canonical, "player_projections":[{"player_id":"aurora-p1", "player_name":"Milo Hart", "projected_goals":0.64, "projected_assists":0.3}], "unsupported_scenarios":[]}))
+
+def test_prediction_contract_accepts_valid_nested_output():
+    canonical=predict_match(PredictionArgs(match_id="match-001"))
+    value=parse_prediction_handoff(json.dumps({"forecast":canonical, "player_projections":[{"player_id":"aurora-p1", "player_name":"Milo Hart", "projected_goals":0.64, "projected_assists":0.3, "basis":"synthetic season attacking rates; not a validated player model"}], "unsupported_scenarios":[]}))
+    assert value.forecast.most_likely_scores
+    assert value.player_projections[0].basis
+
+def test_predictor_prompt_replaces_legacy_output_fields():
+    existing="""# Output Format\n- status\n- home_win_probability\n# Core Principle\nNever invent forecasts."""
+    repaired=repair_predictor_instructions(existing)
+    assert "exactly these three top-level keys" in repaired
+    assert "scoreline_probabilities" in repaired
+    assert "forecast_timestamp" in repaired
+    assert repaired.endswith("# Core Principle\nNever invent forecasts.")
 
 def test_simulated_insight_response_is_validated_without_tool_calls():
     from app.agents.contracts import InsightHandoff
