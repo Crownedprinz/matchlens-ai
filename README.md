@@ -71,7 +71,7 @@ The evaluation prompts are in `backend/evaluations/analysis_questions.json`. The
 The public site defaults to **Demo Mode**. Judges can intentionally opt into the real, server-side Investigator → Predictor → Insight workflow by selecting **Microsoft Foundry Live**, opening the GitHub access guide, and entering this publicly shared demo GUID:
 
 ```text
-B106165E-873C-4007-B035-471F7BBAA07E
+23893000-ca3a-47c9-9ac7-5cb14fb16df2
 ```
 
 This GUID is an opt-in demo gate, not secure authentication or identity verification. It is never placed in a URL or frontend build output. The public backend must separately have `FOUNDRY_PUBLIC_ENABLED=true`, the matching `FOUNDRY_PUBLIC_ACCESS_GUID`, and the pinned Foundry versions. Until those settings are present, Demo Mode remains the only available mode.
