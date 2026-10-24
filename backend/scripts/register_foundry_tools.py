@@ -162,6 +162,11 @@ An array of grounded evidence objects. Every object must contain exactly these t
 
 Use only records returned by the registered Python tools or explicitly supplied in the request. Every `record_id` must be copied exactly from an actual synthetic record and must use the repository's existing ID format. For match-001, return meaningful evidence when the registered tools provide it. Never invent records, IDs, players, results, statistics, or source references. If a record cannot be verified, omit it and explain the limitation in `missing_information`.
 
+The `record_type` value must be exactly the prefix of its `record_id`, never a descriptive alias:
+- `h2h` for `h2h:<match_id>:<index>` records from get_head_to_head
+- `form` for `form:<team_id>:<index>` records from get_team_form
+- `player` for `player:<player_id>` records from get_player_stats
+
 ## missing_information
 
 An array of strings describing genuine missing, unavailable, or unverifiable information. Preserve relevant data-quality limitations here rather than creating placeholder evidence.
@@ -170,7 +175,7 @@ An array of strings describing genuine missing, unavailable, or unverifiable inf
 
 1. Return valid JSON only, without Markdown fences, introductory text, or commentary.
 2. Include exactly `evidence` and `missing_information` at the top level; do not add any other keys.
-3. `evidence` must be an array of objects with exactly `record_type`, `record_id`, and `statement`, all nonempty strings.
+3. `evidence` must be an array of objects with exactly `record_type`, `record_id`, and `statement`, all nonempty strings. `record_type` must exactly match the `record_id` prefix: `h2h`, `form`, or `player`.
 4. `missing_information` must be an array of strings.
 5. Do not output legacy fields such as status, data_quality, match_id, teams, headline, key_findings, limitations, evidence_references, or any other extra fields.
 6. Ground every evidence statement in an actual authorized synthetic record and preserve its exact record identifier.

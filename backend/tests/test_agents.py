@@ -337,6 +337,12 @@ def test_investigator_prompt_preserves_instructions_after_legacy_output():
     repaired=repair_investigator_output_instructions(existing)
     assert repaired.endswith("# Additional Safeguard\nNever use external sources.")
 
+def test_investigator_prompt_declares_canonical_record_type_mapping():
+    repaired=repair_investigator_output_instructions("# Role\n# Output\nlegacy")
+    assert "`h2h` for `h2h:<match_id>:<index>`" in repaired
+    assert "`form` for `form:<team_id>:<index>`" in repaired
+    assert "`player` for `player:<player_id>`" in repaired
+
 def test_insight_prompt_replaces_legacy_output_fields():
     existing='# Role\nKeep validation rules.\n- If an important inconsistency is detected, set status to "needs_review" and describe the issue.\n# Output\n- status\n- headline\n'
     repaired=repair_insight_instructions(existing)
