@@ -5,7 +5,7 @@ from app.agents import tools
 from app.agents.provenance import agent_context, begin, calls, execute
 from app.agents.validation import parse_json, validate_evidence
 from app.agents.isolated_diagnostics import parse_insight_handoff, parse_investigator_handoff, parse_prediction_handoff, forecast_mismatches
-from app.agents.diagnostics import correlation_id, event
+from app.agents.diagnostics import correlation_id, event, foundry_request_route, safe_remote_error_metadata
 from app.repositories.synthetic import players
 
 class FoundryConfigurationError(RuntimeError): pass
@@ -47,8 +47,12 @@ async def _text(agent, payload: dict, model, label: str, agent_name: str, agent_
             event("sdk_run_response_received", agent_name=agent_name, agent_version=agent_version, stage=label, attempt=attempt + 1, response_type=type(result).__name__)
             event("sdk_http_response_received", agent_name=agent_name, agent_version=agent_version, stage=label, request_kind="agent_run", status="sdk_response_received", latency_ms=round((time.perf_counter()-sdk_started)*1000))
         except Exception as exc:
-            event("agent_invocation_failed", agent_name=agent_name, agent_version=agent_version, stage=label, attempt=attempt + 1, failure_class="transport_or_tool", error_type=type(exc).__name__, latency_ms=round((time.perf_counter()-sdk_started)*1000))
-            raise FoundryResponseError(f"{label} invocation failed (correlation_id={correlation_id()}): {type(exc).__name__}: {exc}") from exc
+            error_metadata = safe_remote_error_metadata(exc)
+            latency_ms = round((time.perf_counter()-sdk_started)*1000)
+            event("sdk_http_response_received", agent_name=agent_name, agent_version=agent_version, stage=label, request_kind="agent_run", status="error", latency_ms=latency_ms, **error_metadata)
+            event("agent_invocation_failed", agent_name=agent_name, agent_version=agent_version, stage=label, attempt=attempt + 1, failure_class="transport_or_tool", latency_ms=latency_ms, **error_metadata)
+            details = ", ".join(f"{key}={value}" for key, value in error_metadata.items() if value is not None)
+            raise FoundryResponseError(f"{label} invocation failed (correlation_id={correlation_id()}): {details}") from exc
         try:
             parsed = model(_result_text(result))
         except (ValueError, TypeError) as exc:
@@ -75,7 +79,7 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
     def make(role):
         item=cfg[role]; tool_names={"investigator":["get_head_to_head","get_team_form","get_player_stats","get_match_context"],"predictor":["predict_match","predict_player","get_model_explanation"],"insight":[]}[role]
         agent = FoundryAgent(**common,agent_name=item["name"],agent_version=item["version"],tools=[FOUNDRY_FUNCTIONS[name] for name in tool_names])
-        event("foundry_agent_initialized", role=role, agent_name=item["name"], agent_version=item["version"], tool_count=len(tool_names), timeout_seconds=common["timeout"])
+        event("foundry_agent_initialized", role=role, agent_name=item["name"], agent_version=item["version"], tool_count=len(tool_names), timeout_seconds=common["timeout"], credential_mode=os.getenv("FOUNDRY_CREDENTIAL_MODE", "azure_cli").lower(), **foundry_request_route(cfg["endpoint"]))
         return agent
     investigator,predictor,insight=make("investigator"),make("predictor"),make("insight"); begin()
     try:

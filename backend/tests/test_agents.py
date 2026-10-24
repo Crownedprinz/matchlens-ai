@@ -11,6 +11,7 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
+from app.agents.diagnostics import foundry_request_route, safe_remote_error_metadata
 from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_insight_handoff, parse_investigator_handoff, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
@@ -140,6 +141,49 @@ def test_transport_timeout_is_not_retried():
     agent=TimeoutAgent()
     with pytest.raises(FoundryResponseError, match="invocation failed"):
         asyncio.run(_text(agent, {"match_id":"match-001"}, lambda text: text, "investigator", "matchlens-investigator", "6", http_timeout=60))
+    assert agent.calls == 1
+
+def test_foundry_route_records_project_responses_and_explicit_version_boundary():
+    route=foundry_request_route("https://example.services.ai.azure.com/api/projects/demo")
+    assert route["request_route"] == "project_responses"
+    assert route["request_path"] == "/api/projects/demo/openai/v1/responses"
+    assert route["agent_reference_in_body"] is True
+    assert route["allow_preview"] is False
+
+def test_remote_error_metadata_keeps_status_code_and_request_id_without_headers():
+    class Response:
+        status_code=403
+        headers={"x-ms-request-id":"request-123", "authorization":"Bearer secret"}
+    class PermissionDenied(Exception):
+        status_code=403
+        code="PermissionDenied"
+        response=Response()
+        message="Permission denied"
+    metadata=safe_remote_error_metadata(PermissionDenied("ignored"))
+    assert metadata["http_status"] == 403
+    assert metadata["error_code"] == "PermissionDenied"
+    assert metadata["request_id"] == "request-123"
+    assert "authorization" not in json.dumps(metadata).lower()
+    assert "secret" not in json.dumps(metadata)
+
+def test_permission_denied_is_reported_with_http_context_and_not_retried():
+    class Response:
+        status_code=403
+        headers={"x-ms-request-id":"request-403"}
+    class PermissionDenied(Exception):
+        status_code=403
+        code="PermissionDenied"
+        response=Response()
+        message="The caller is not permitted to interact with this endpoint"
+    class DeniedAgent:
+        calls=0
+        async def run(self, prompt):
+            self.calls += 1
+            raise PermissionDenied("ignored")
+    agent=DeniedAgent()
+    with pytest.raises(FoundryResponseError, match="http_status=403") as raised:
+        asyncio.run(_text(agent, {"match_id":"match-001"}, lambda text: text, "investigator", "matchlens-investigator", "8", http_timeout=60, validation_retries=3))
+    assert "request_id=request-403" in str(raised.value)
     assert agent.calls == 1
 
 def test_response_validation_retries_once_but_transport_does_not():
