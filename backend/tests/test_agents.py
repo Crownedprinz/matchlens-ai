@@ -11,7 +11,7 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
-from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, parse_prediction_handoff, required_tool_verification
+from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
 from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_predictor_instructions, tool_schema, proposed
@@ -159,6 +159,15 @@ def test_insight_check_detects_numbers_and_contradictions():
     assert result["unsupported_numerical_claims"] == ["999.0%"]
     assert result["contradictions"] == ["conflict"]
     assert result["review_required"] is True
+
+def test_insight_report_includes_returned_prose_and_checks():
+    from app.agents.contracts import InsightHandoff
+    insight=InsightHandoff(summary="Home advantage matters.", bullets=["Synthetic form supports the conclusion."], unsupported_claims=["No odds data."], contradictions=[])
+    report=insight_report(insight, {"valid": True, "review_required": True})
+    assert report["summary"] == insight.summary
+    assert report["bullets"] == insight.bullets
+    assert report["unsupported_claims"] == insight.unsupported_claims
+    assert report["automated_checks"]["review_required"] is True
 
 def test_missing_real_predictor_tools_fails_closed():
     from app.agents.contracts import Forecast, ToolCall

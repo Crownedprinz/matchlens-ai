@@ -74,6 +74,17 @@ def insight_check(insight: InsightHandoff, investigator: InvestigatorHandoff, pr
     }
 
 
+def insight_report(insight: InsightHandoff, checks: dict[str, Any]) -> dict[str, Any]:
+    """Expose the validated prose beside automated checks for human review."""
+    return {
+        "summary": insight.summary,
+        "bullets": insight.bullets,
+        "unsupported_claims": insight.unsupported_claims,
+        "contradictions": insight.contradictions,
+        "automated_checks": checks,
+    }
+
+
 def required_tool_verification(tool_calls: list[ToolCall], agent_name: str, agent_version: str) -> list[str]:
     required = {"predict_match", "predict_player", "get_model_explanation"}
     called = {call.name for call in tool_calls if call.agent_name == agent_name and call.agent_version == agent_version and call.outcome == "success"}

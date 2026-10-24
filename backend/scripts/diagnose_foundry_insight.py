@@ -16,7 +16,7 @@ from app.agents import tools
 from app.agents.contracts import AnalysisRequest, InsightHandoff, PlayerPredictionArgs, PredictionArgs, PredictionHandoff
 from app.agents.diagnostics import event, start_request
 from app.agents.foundry_workflow import FoundryResponseError, _result_text
-from app.agents.isolated_diagnostics import build_investigator_handoff, insight_check
+from app.agents.isolated_diagnostics import build_investigator_handoff, insight_check, insight_report
 from app.agents.provenance import agent_context, begin, calls, execute
 from app.agents.validation import parse_json, validate_evidence
 
@@ -51,7 +51,7 @@ async def run_once(end_to_end_timeout: float, http_timeout: float) -> None:
             raise FoundryResponseError(f"insight invocation failed: {type(exc).__name__}: {exc}") from exc
         insight = parse_json(_result_text(result), InsightHandoff)
         checks = insight_check(insight, investigator, prediction)
-        print(json.dumps({"status": "review_required" if checks["valid"] else "validation_warning", "agent_name": name, "agent_version": version, "checks": checks, "preparation_tool_calls": [call.model_dump() for call in calls() if call.agent_name == "local-python-preparation"], "agent_tool_calls": [call.model_dump() for call in calls() if call.agent_name == name and call.agent_version == version]}, indent=2))
+        print(json.dumps({"status": "review_required" if checks["valid"] else "validation_warning", "agent_name": name, "agent_version": version, "returned_insight": insight_report(insight, checks), "preparation_tool_calls": [call.model_dump() for call in calls() if call.agent_name == "local-python-preparation"], "agent_tool_calls": [call.model_dump() for call in calls() if call.agent_name == name and call.agent_version == version]}, indent=2))
     finally:
         await credential.close()
 
