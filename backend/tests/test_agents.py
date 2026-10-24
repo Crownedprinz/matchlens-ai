@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
+from app.agents.isolated_diagnostics import build_investigator_handoff, insight_check
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
 from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, tool_schema, proposed
@@ -141,6 +143,37 @@ def test_end_to_end_timeout_is_bounded_and_reported(monkeypatch):
     monkeypatch.setenv("FOUNDRY_END_TO_END_TIMEOUT_SECONDS", "0.001")
     with pytest.raises(FoundryResponseError, match="end-to-end timeout"):
         asyncio.run(workflow.run_foundry(__import__("app.agents.contracts", fromlist=["AnalysisRequest"]).AnalysisRequest(match_id="match-001", question="Why?")))
+
+def test_isolated_diagnostic_inputs_use_valid_synthetic_references():
+    handoff=build_investigator_handoff("match-001")
+    assert handoff.evidence
+    assert validate_evidence(handoff, "match-001") == handoff
+
+def test_insight_check_detects_numbers_and_contradictions():
+    prediction=__import__("app.agents.contracts", fromlist=["PredictionHandoff"]).PredictionHandoff(forecast=predict_match(PredictionArgs(match_id="match-001")), player_projections=[])
+    clean=__import__("app.agents.contracts", fromlist=["InsightHandoff"]).InsightHandoff(summary="The home side is favored.", bullets=["The model is based on synthetic evidence."])
+    assert insight_check(clean, prediction)["valid"]
+    noisy=__import__("app.agents.contracts", fromlist=["InsightHandoff"]).InsightHandoff(summary="The home side wins 999.0%.", bullets=[], contradictions=["conflict"])
+    result=insight_check(noisy, prediction)
+    assert result["unsupported_numerical_claims"] == ["999.0%"]
+    assert result["contradictions"] == ["conflict"]
+
+def test_simulated_predictor_response_is_validated_and_reconciled():
+    from app.agents.contracts import PredictionHandoff
+    canonical=predict_match(PredictionArgs(match_id="match-001"))
+    class PredictorAgent:
+        async def run(self, prompt):
+            return type("Result", (), {"text": json.dumps({"forecast": canonical, "player_projections": [], "unsupported_scenarios": []})})()
+    parsed=asyncio.run(_text(PredictorAgent(), {"canonical_python_forecast":canonical}, lambda text: __import__("app.agents.validation", fromlist=["parse_json"]).parse_json(text, PredictionHandoff), "predictor", "matchlens-predictor", "5", http_timeout=60))
+    reconcile_forecast(parsed.forecast.model_dump(), canonical)
+
+def test_simulated_insight_response_is_validated_without_tool_calls():
+    from app.agents.contracts import InsightHandoff
+    class InsightAgent:
+        async def run(self, prompt):
+            return type("Result", (), {"text": json.dumps({"summary":"Grounded synthetic analysis.", "bullets":["The evidence package was provided."], "unsupported_claims":[], "contradictions":[]})})()
+    parsed=asyncio.run(_text(InsightAgent(), {"prediction":{}}, lambda text: __import__("app.agents.validation", fromlist=["parse_json"]).parse_json(text, InsightHandoff), "insight", "matchlens-insight", "3", http_timeout=60))
+    assert parsed.contradictions == []
 def test_unsupported_scenario_is_not_registered():
     assert "simulate_scenario" not in AGENTS["predictor"]["tools"]
     with pytest.raises(Exception): __import__("app.agents.tools",fromlist=["simulate_scenario"]).simulate_scenario(ScenarioArgs(match_id="match-001",home_goals=1))
