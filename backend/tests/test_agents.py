@@ -11,7 +11,7 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
-from app.agents.isolated_diagnostics import build_investigator_handoff, insight_check
+from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
 from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, tool_schema, proposed
@@ -152,11 +152,36 @@ def test_isolated_diagnostic_inputs_use_valid_synthetic_references():
 def test_insight_check_detects_numbers_and_contradictions():
     prediction=__import__("app.agents.contracts", fromlist=["PredictionHandoff"]).PredictionHandoff(forecast=predict_match(PredictionArgs(match_id="match-001")), player_projections=[])
     clean=__import__("app.agents.contracts", fromlist=["InsightHandoff"]).InsightHandoff(summary="The home side is favored.", bullets=["The model is based on synthetic evidence."])
-    assert insight_check(clean, prediction)["valid"]
+    investigator=build_investigator_handoff("match-001")
+    assert insight_check(clean, investigator, prediction)["valid"]
     noisy=__import__("app.agents.contracts", fromlist=["InsightHandoff"]).InsightHandoff(summary="The home side wins 999.0%.", bullets=[], contradictions=["conflict"])
-    result=insight_check(noisy, prediction)
+    result=insight_check(noisy, investigator, prediction)
     assert result["unsupported_numerical_claims"] == ["999.0%"]
     assert result["contradictions"] == ["conflict"]
+    assert result["review_required"] is True
+
+def test_missing_real_predictor_tools_fails_closed():
+    from app.agents.contracts import Forecast, ToolCall
+    canonical=predict_match(PredictionArgs(match_id="match-001"))
+    returned=Forecast.model_validate(canonical)
+    mismatches=forecast_mismatches(returned, canonical)
+    assert mismatches == []
+    calls=[ToolCall(name="predict_match", agent_name="matchlens-predictor", agent_version="5", duration_ms=1, outcome="success")]
+    assert required_tool_verification(calls, "matchlens-predictor", "5") == ["get_model_explanation", "predict_player"]
+
+def test_legitimate_rounded_insight_values_are_supported():
+    from app.agents.contracts import InsightHandoff
+    prediction=__import__("app.agents.contracts", fromlist=["PredictionHandoff"]).PredictionHandoff(forecast=predict_match(PredictionArgs(match_id="match-001")), player_projections=[])
+    investigator=build_investigator_handoff("match-001")
+    insight=InsightHandoff(summary="The model gives the home side about 50.0%.", bullets=[])
+    assert insight_check(insight, investigator, prediction)["unsupported_numerical_claims"] == []
+
+def test_mismatched_likely_scoreline_is_reported():
+    from app.agents.contracts import Forecast
+    canonical=predict_match(PredictionArgs(match_id="match-001"))
+    altered={**canonical, "most_likely_scores": [dict(score, home=99) if index == 0 else score for index, score in enumerate(canonical["most_likely_scores"])]}
+    mismatches=forecast_mismatches(Forecast.model_validate(altered), canonical)
+    assert "forecast.most_likely_scores[0].home" in mismatches
 
 def test_simulated_predictor_response_is_validated_and_reconciled():
     from app.agents.contracts import PredictionHandoff

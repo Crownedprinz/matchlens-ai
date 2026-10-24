@@ -32,9 +32,9 @@ async def run_once(end_to_end_timeout: float, http_timeout: float) -> None:
         raise SystemExit("FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_INSIGHT_VERSION are required")
     request = AnalysisRequest(match_id="match-001", audience="fan", question="Why is the home team favored?", minute=0)
     investigator = validate_evidence(build_investigator_handoff(request.match_id), request.match_id)
-    canonical = execute("predict_match", tools.predict_match, PredictionArgs(match_id=request.match_id, minute=request.minute).model_dump(), agent_name="matchlens-predictor", agent_version=os.getenv("FOUNDRY_PREDICTOR_VERSION", "5"))
+    canonical = execute("predict_match", tools.predict_match, PredictionArgs(match_id=request.match_id, minute=request.minute).model_dump(), agent_name="local-python-preparation", agent_version="local")
     players_data = tools.get_player_stats({"match_id": request.match_id, "team_side": None})["players"]
-    projections = [execute("predict_player", tools.predict_player, PlayerPredictionArgs(match_id=request.match_id, player_id=row["id"]).model_dump(), agent_name="matchlens-predictor", agent_version=os.getenv("FOUNDRY_PREDICTOR_VERSION", "5")) for row in sorted(players_data, key=lambda row: (row["goals"], row["assists"], row["key_passes"]), reverse=True)[:3]]
+    projections = [execute("predict_player", tools.predict_player, PlayerPredictionArgs(match_id=request.match_id, player_id=row["id"]).model_dump(), agent_name="local-python-preparation", agent_version="local") for row in sorted(players_data, key=lambda row: (row["goals"], row["assists"], row["key_passes"]), reverse=True)[:3]]
     prediction = PredictionHandoff(forecast=canonical, player_projections=projections)
     payload = {"audience": request.audience, "question": request.question, "investigator": investigator.model_dump(), "prediction": prediction.model_dump(), "required_output": "JSON InsightHandoff with summary, bullets, unsupported_claims, contradictions. Do not add statistics."}
     credential = AzureCliCredential()
@@ -50,8 +50,8 @@ async def run_once(end_to_end_timeout: float, http_timeout: float) -> None:
             event("agent_invocation_failed", agent_name=name, agent_version=version, stage="insight-diagnostic", failure_class="transport_or_timeout", error_type=type(exc).__name__, latency_ms=round((time.perf_counter() - started) * 1000))
             raise FoundryResponseError(f"insight invocation failed: {type(exc).__name__}: {exc}") from exc
         insight = parse_json(_result_text(result), InsightHandoff)
-        checks = insight_check(insight, prediction)
-        print(json.dumps({"status": "ok" if checks["valid"] else "validation_warning", "agent_name": name, "agent_version": version, "checks": checks, "tool_calls": [call.model_dump() for call in calls()]}, indent=2))
+        checks = insight_check(insight, investigator, prediction)
+        print(json.dumps({"status": "review_required" if checks["valid"] else "validation_warning", "agent_name": name, "agent_version": version, "checks": checks, "preparation_tool_calls": [call.model_dump() for call in calls() if call.agent_name == "local-python-preparation"], "agent_tool_calls": [call.model_dump() for call in calls() if call.agent_name == name and call.agent_version == version]}, indent=2))
     finally:
         await credential.close()
 
