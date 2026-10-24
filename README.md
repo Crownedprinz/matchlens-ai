@@ -9,7 +9,7 @@ MatchLens AI is a local-first football intelligence dashboard for the Microsoft 
 - Frontend: Next.js App Router, React, TypeScript, Tailwind CSS, Recharts, Lucide
 - Backend: Python 3.11+, FastAPI, Pydantic, NumPy, SciPy
 - Model: explainable Poisson scoreline model with form, attack, defence, home advantage, and live remaining-time conditioning
-- Future boundary: `backend/app/agents/` contains typed payloads and service interfaces for optional Microsoft Foundry agents.
+- Agent workflow: Microsoft Foundry Prompt Agents orchestrated by the Microsoft Agent Framework, with local Python function dispatch and strict Pydantic handoffs.
 
 ```mermaid
 flowchart LR
@@ -49,7 +49,7 @@ The forecast combines synthetic attack, opponent defence, home advantage, and fi
 
 ## Phase 2 agent workflow
 
-`POST /api/analysis` runs Investigator → Predictor → Insight. In the default `AGENT_MODE=mock`, all three stages are deterministic local Python code and call the validated tools in `backend/app/agents/tools.py`; no Foundry network calls are made. The response includes evidence record IDs, forecast payloads, audience-specific insight, tool-call telemetry, and mode.
+`POST /api/analysis` runs Investigator → Predictor → Insight. In the default `AGENT_MODE=mock`, all three stages are deterministic local Python code and call the validated tools in `backend/app/agents/tools.py`; no Foundry network calls are made. In `AGENT_MODE=foundry`, the verified versions are Investigator v8, Predictor v6, and Insight v5. The response includes evidence record IDs, forecast payloads, audience-specific insight, tool-call telemetry, agent traces, and mode.
 
 For live Foundry mode, install optional dependencies with `pip install -r requirements-foundry.txt`, authenticate with Azure CLI (`az login`), and set the variables in `backend/.env.example`. Each Prompt Agent requires its own explicit `*_VERSION`; the adapter never silently selects latest and never falls back to mock mode. It fails clearly if the SDK, endpoint, agent names, permissions, or structured response are unavailable.
 
@@ -84,7 +84,48 @@ cd backend && PYTHONPATH=. pytest
 cd frontend && npm run lint && npm run typecheck && npm run build
 ```
 
-The app avoids club logos, copyrighted footage, scraping, cloud credentials, and accuracy claims. Audience summaries are deterministic templates backed by the same evidence and are ready to be replaced by Foundry agent execution later.
+The app avoids club logos, copyrighted footage, scraping, cloud credentials, and accuracy claims. Synthetic replay and forecasts remain deterministic; Foundry inference is explicit, server-side, bounded, and protected by an analysis rate limit. Public deployments should keep `AGENT_MODE=mock` unless authenticated access and Azure cost controls are in place.
+
+## Frontend integration and deployment preparation
+
+The Next.js client is a static export and reads its backend from `NEXT_PUBLIC_API_URL`. It renders the real analysis response: Investigator evidence and missing information, Python forecast values, player projections, Insight prose, mode, agent stages, and tool provenance. Replay changes call only the deterministic forecast endpoint; the paid three-agent workflow runs only after the user presses **Analyze match**.
+
+Local environment examples:
+
+```bash
+cp frontend/.env.example frontend/.env.local
+# Set NEXT_PUBLIC_API_URL to the FastAPI /api URL.
+```
+
+The backend accepts comma-separated `CORS_ORIGINS` and limits `/api/analysis` to `ANALYSIS_RATE_LIMIT_PER_MINUTE` requests per client per minute. These are practical single-container protections, not a replacement for an authenticated gateway in production.
+
+Build deployment artifacts without creating Azure resources:
+
+```bash
+cd frontend && npm run build
+cd ../backend && docker build -t matchlens-api .
+```
+
+The frontend can be connected to Azure Static Web Apps using the generated `frontend/out` directory. The backend Dockerfile is ready for Azure Container Apps and listens on `$PORT`, with synthetic `data/demo.json` included. No public URL or deployment is claimed by this repository.
+
+## Hackathon pitch
+
+MatchLens AI turns synthetic football events into intelligence people can actually understand. A deterministic Python forecasting engine calculates the probabilities; a Microsoft Foundry Investigator gathers grounded evidence; a Predictor preserves the numerical forecast; and an Insight agent explains the result for fans, analysts, or fantasy players. The dashboard makes that chain visible instead of hiding it behind a chatbot: users can replay a match, inspect changing probabilities, ask a focused question, and trace the answer back to evidence IDs and Python tool calls. The result is a judge-friendly demonstration of multi-agent orchestration with a clear trust boundary—synthetic data is labelled, model output is not presented as certainty, and unavailable information is shown. Mock mode keeps the public demo low-cost, while an explicit server-side Foundry mode proves the same workflow can run with real agents.
+
+## Two-minute demo sequence
+
+1. Start on the Match Command Centre and point out the synthetic-data label, score, expected goals, and win probabilities.
+2. Move the replay slider through a goal and show the score and deterministic forecast changing without invoking Foundry.
+3. Switch Fan, Analyst, and Fantasy lenses to show the different emphasis.
+4. Ask “Why is the home team favored?” and show Investigator → Predictor → Insight, evidence IDs, tool activity, and uncertainty.
+5. Open the player intelligence panel to show the synthetic projections and finish on the explanation’s trust boundary.
+
+## Current limitations
+
+- The data is fictional and synthetic; it is not official Premier League data.
+- Foundry mode requires Azure credentials, configured agent versions, and incurs model inference cost.
+- Semantic review is still appropriate for AI-generated explanations even when schema and numerical checks pass.
+- Azure resources are configuration-ready only; deployment and public endpoints must be provisioned and verified separately.
 
 ## Next phase
 

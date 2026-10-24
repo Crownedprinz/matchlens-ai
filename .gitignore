@@ -21,3 +21,5 @@ coverage/
 backend/data/*.json
 !backend/data/demo.json
 graphify-out/
+.playwright-mcp/
+frontend/out/

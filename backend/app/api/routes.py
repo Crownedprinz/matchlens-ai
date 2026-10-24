@@ -1,3 +1,6 @@
+import os
+import time
+from collections import defaultdict, deque
 from fastapi import APIRouter, Query, HTTPException, Request
 from app.agents.contracts import AnalysisRequest, AnalysisResponse
 from app.agents.service import run_analysis
@@ -7,6 +10,15 @@ from app.repositories.synthetic import data, get_fixture, team, players, h2h, fo
 from app.forecasting.poisson import forecast
 from app.agents.diagnostics import event, start_request
 router = APIRouter(prefix="/api")
+_analysis_requests: dict[str, deque[float]] = defaultdict(deque)
+def _check_analysis_limit(request: Request) -> None:
+    limit = int(os.getenv("ANALYSIS_RATE_LIMIT_PER_MINUTE", "12"))
+    if limit <= 0: return
+    key = request.client.host if request.client else "unknown"
+    now = time.monotonic(); window = _analysis_requests[key]
+    while window and now - window[0] >= 60: window.popleft()
+    if len(window) >= limit: raise HTTPException(status_code=429, detail="Analysis rate limit reached; try again shortly.")
+    window.append(now)
 def summary(fixture): return MatchSummary(id=fixture.id, home_team=team(fixture.home_team_id), away_team=team(fixture.away_team_id), date=fixture.date, status=fixture.status, home_score=fixture.home_score, away_score=fixture.away_score, venue=fixture.venue)
 @router.get("/health")
 def health(): return {"status":"ok", "dataset":"synthetic", "version":"phase-1"}
@@ -29,6 +41,7 @@ def match_forecast(match_id: str, minute: int = Query(0, ge=0, le=90)): return f
 def match_events(match_id: str): get_fixture(match_id); return events(match_id)
 @router.post("/analysis", response_model=AnalysisResponse)
 async def analysis(request: Request, payload: AnalysisRequest):
+    _check_analysis_limit(request)
     correlation = start_request(request.headers.get("x-correlation-id"))
     event("api_request_received", route="/api/analysis", method="POST")
     try:
