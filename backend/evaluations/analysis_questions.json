@@ -1,0 +1,12 @@
+[
+  {"question":"Why is the home team favored?","audience":"fan","required_tools":["get_team_form","get_player_stats","predict_match"],"requires_evidence":true},
+  {"question":"What do the last five H2H matches suggest?","audience":"analyst","required_tools":["get_head_to_head"],"requires_evidence":true},
+  {"question":"Which attacker has the strongest projected return?","audience":"fantasy","required_tools":["get_player_stats","predict_player"],"requires_evidence":true},
+  {"question":"How did the goal change winning probabilities?","audience":"fan","required_tools":["get_match_context","predict_match"],"requires_evidence":true},
+  {"question":"Compare both teams' recent form","audience":"analyst","required_tools":["get_team_form"],"requires_evidence":true},
+  {"question":"Who leads attacking contribution?","audience":"fantasy","required_tools":["get_player_stats","predict_player"],"requires_evidence":true},
+  {"question":"What is the likely final score?","audience":"fan","required_tools":["predict_match"],"requires_evidence":true},
+  {"question":"Explain the model assumptions","audience":"analyst","required_tools":["get_model_explanation"],"requires_evidence":true},
+  {"question":"What changes after minute 78?","audience":"analyst","required_tools":["get_match_context","predict_match"],"requires_evidence":true},
+  {"question":"Give me a captaincy signal","audience":"fantasy","required_tools":["get_player_stats","predict_player"],"requires_evidence":true}
+]
