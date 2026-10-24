@@ -14,7 +14,7 @@ from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_f
 from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
-from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_predictor_instructions, tool_schema, proposed
+from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_insight_instructions, repair_predictor_instructions, tool_schema, proposed
 from app.repositories.synthetic import get_fixture
 client = TestClient(app)
 def test_tools_validate_and_use_real_data():
@@ -227,6 +227,16 @@ def test_predictor_prompt_replaces_legacy_output_fields():
     assert "scoreline_probabilities" in repaired
     assert "forecast_timestamp" in repaired
     assert repaired.endswith("# Core Principle\nNever invent forecasts.")
+
+def test_insight_prompt_replaces_legacy_output_fields():
+    existing='# Role\nKeep validation rules.\n- If an important inconsistency is detected, set status to "needs_review" and describe the issue.\n# Output\n- status\n- headline\n'
+    repaired=repair_insight_instructions(existing)
+    assert "exactly four top-level keys" in repaired
+    assert "summary" in repaired and "unsupported_claims" in repaired and "contradictions" in repaired
+    assert "- status\n- headline" not in repaired
+    assert "Do not output legacy fields" in repaired
+    assert 'set status to "needs_review"' not in repaired
+    assert "describe it in the contradictions array" in repaired
 
 def test_workflow_uses_exact_prediction_contract_parser():
     import inspect

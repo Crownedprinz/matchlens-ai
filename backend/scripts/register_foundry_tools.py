@@ -178,6 +178,67 @@ The response must not contain status, match_id, model_version, forecast_timestam
 '''
     return instructions[:start] + replacement + instructions[end:]
 
+def repair_insight_instructions(instructions: str) -> str:
+    """Return a read-only corrected prompt with the local InsightHandoff contract."""
+    start = instructions.find("# Output")
+    if start < 0:
+        raise ValueError("Insight instructions do not contain the expected output section")
+    prefix = instructions[:start].replace(
+        'If an important inconsistency is detected, set status to "needs_review" and describe the issue.',
+        'If an important inconsistency is detected, describe it in the contradictions array; the backend diagnostic records review status separately.',
+    )
+    replacement = '''# Output Format
+
+Return exactly one valid JSON object containing exactly four top-level keys:
+
+- summary
+- bullets
+- unsupported_claims
+- contradictions
+
+The output must conform to the MatchLens AI backend's `InsightHandoff` contract.
+
+## summary
+
+A nonempty string containing a clear, concise, audience-appropriate explanation of the match analysis. Answer the user's actual question. Base the explanation exclusively on the supplied Investigator evidence and Predictor results. Distinguish statistical forecasts from actual match outcomes. Clearly communicate uncertainty where relevant. Do not invent statistics, evidence, or causal relationships.
+
+## bullets
+
+An array of strings containing the most useful supporting insights. Explain principal forecast drivers, historical context, player information, or limitations relevant to the question. Tailor the presentation to the requested audience: fan, analyst, or fantasy. Preserve numerical values from the supplied validated forecast. Never introduce unsupported percentages, expected goals, player projections, or historical results. If there are no supported additional insights, return an empty array.
+
+## unsupported_claims
+
+An array of strings describing claims that could not be verified from the supplied evidence and forecast. Do not present unsupported claims as facts in summary or bullets. Use an empty array when none were identified.
+
+## contradictions
+
+An array of strings describing inconsistencies between the supplied evidence, forecast, and proposed explanation. Report genuine contradictions rather than silently reconciling conflicting information. Do not modify Python-generated forecasts. Use an empty array when none were identified.
+
+# Strict Output Requirements
+
+1. Return valid JSON only, without Markdown fences, introductory text, or commentary.
+2. Include all four required top-level keys and no other top-level keys.
+3. `summary` must be a string; `bullets`, `unsupported_claims`, and `contradictions` must be arrays of strings.
+4. Do not output legacy fields such as status, match_id, audience_mode, headline, key_insights, supporting_evidence, forecast_explanation, uncertainty_statement, data_warnings, or broadcast_overlay.
+5. Preserve useful legacy presentation requirements within summary and bullets where evidence-supported.
+6. Never fabricate missing evidence or numerical values.
+7. Use only the provided validated evidence and forecasting results. Do not access external sources.
+8. If supporting information is insufficient, communicate that limitation rather than producing an unsupported explanation.
+
+# Required JSON Structure
+
+{"summary":"Evidence-grounded explanation appropriate for the requested audience.","bullets":["Supporting insight derived from the supplied evidence."],"unsupported_claims":[],"contradictions":[]}
+
+# Core Principle
+
+The MatchLens Insight Agent explains validated football intelligence; it does not create new predictions.
+
+Every numerical claim must be grounded in the supplied Python-generated forecast or validated evidence.
+
+Return trustworthy, understandable explanations without inventing facts.
+'''
+    return prefix + replacement
+
 def client():
     try:
         from azure.ai.projects import AIProjectClient
