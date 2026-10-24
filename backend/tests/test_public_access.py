@@ -52,6 +52,49 @@ def test_direct_foundry_request_uses_gate_then_fails_without_foundry_configurati
     assert "FOUNDRY_PROJECT_ENDPOINT" in response.json()["detail"]
 
 
+def test_foundry_error_details_can_be_returned_only_when_explicitly_enabled(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_PUBLIC_ENABLED", "true")
+    monkeypatch.setenv("FOUNDRY_PUBLIC_ACCESS_GUID", "public-demo-guid")
+    monkeypatch.setenv("FOUNDRY_DIAGNOSTICS_IN_RESPONSE", "true")
+
+    async def failed_analysis(_request):
+        raise FoundryResponseError(
+            "investigator invocation failed",
+            diagnostics={
+                "outer_exception_type": "ChatClientException",
+                "root_exception_type": "HTTPStatusError",
+                "http_status": 403,
+                "error_code": "PermissionDenied",
+                "request_id": "request-123",
+                "service_details": {"type": "authorization_error", "target": "agents"},
+            },
+        )
+
+    monkeypatch.setattr(routes, "run_analysis", failed_analysis)
+    body = {"mode": "foundry", "access_guid": "public-demo-guid", "match_id": "match-001", "audience": "fan", "question": "Why?"}
+    response = client.post("/api/analysis", json=body)
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["diagnostics"]["http_status"] == 403
+    assert detail["diagnostics"]["error_code"] == "PermissionDenied"
+    assert detail["diagnostics"]["request_id"] == "request-123"
+
+
+def test_foundry_error_details_are_not_returned_by_default(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_PUBLIC_ENABLED", "true")
+    monkeypatch.setenv("FOUNDRY_PUBLIC_ACCESS_GUID", "public-demo-guid")
+    monkeypatch.delenv("FOUNDRY_DIAGNOSTICS_IN_RESPONSE", raising=False)
+
+    async def failed_analysis(_request):
+        raise FoundryResponseError("safe failure", diagnostics={"http_status": 403})
+
+    monkeypatch.setattr(routes, "run_analysis", failed_analysis)
+    body = {"mode": "foundry", "access_guid": "public-demo-guid", "match_id": "match-001", "audience": "fan", "question": "Why?"}
+    response = client.post("/api/analysis", json=body)
+    assert response.status_code == 502
+    assert response.json()["detail"] == "safe failure"
+
+
 def test_foundry_attempt_counts_error_and_enforces_daily_limit(monkeypatch):
     monkeypatch.setenv("FOUNDRY_PUBLIC_ENABLED", "true")
     monkeypatch.setenv("FOUNDRY_PUBLIC_ACCESS_GUID", "public-demo-guid")

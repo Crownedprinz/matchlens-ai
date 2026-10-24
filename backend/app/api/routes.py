@@ -68,7 +68,10 @@ async def analysis(request: Request, payload: AnalysisRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except FoundryResponseError as exc:
         event("api_request_failed", error_type=type(exc).__name__)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        detail: str | dict[str, object] = str(exc)
+        if os.getenv("FOUNDRY_DIAGNOSTICS_IN_RESPONSE", "false").lower() == "true" and exc.diagnostics:
+            detail = {"message": str(exc), "diagnostics": exc.diagnostics}
+        raise HTTPException(status_code=502, detail=detail) from exc
     except ValueError as exc:
         event("api_request_failed", error_type=type(exc).__name__)
         raise HTTPException(status_code=400, detail=str(exc)) from exc

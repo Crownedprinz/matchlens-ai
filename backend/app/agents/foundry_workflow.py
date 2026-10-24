@@ -9,7 +9,10 @@ from app.agents.diagnostics import correlation_id, event, foundry_request_route,
 from app.repositories.synthetic import players
 
 class FoundryConfigurationError(RuntimeError): pass
-class FoundryResponseError(RuntimeError): pass
+class FoundryResponseError(RuntimeError):
+    def __init__(self, message: str, *, diagnostics: dict | None = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics
 def _foundry_credential():
     """Use managed identity in Azure and Azure CLI credentials locally."""
     from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
@@ -52,7 +55,10 @@ async def _text(agent, payload: dict, model, label: str, agent_name: str, agent_
             event("sdk_http_response_received", agent_name=agent_name, agent_version=agent_version, stage=label, request_kind="agent_run", status="error", latency_ms=latency_ms, **error_metadata)
             event("agent_invocation_failed", agent_name=agent_name, agent_version=agent_version, stage=label, attempt=attempt + 1, failure_class="transport_or_tool", latency_ms=latency_ms, **error_metadata)
             details = ", ".join(f"{key}={value}" for key, value in error_metadata.items() if value is not None)
-            raise FoundryResponseError(f"{label} invocation failed (correlation_id={correlation_id()}): {details}") from exc
+            raise FoundryResponseError(
+                f"{label} invocation failed (correlation_id={correlation_id()}): {details}",
+                diagnostics=error_metadata,
+            ) from exc
         try:
             parsed = model(_result_text(result))
         except (ValueError, TypeError) as exc:
@@ -101,7 +107,8 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
         ins=await _text(insight,ins_payload,parse_insight_handoff,"insight",cfg["insight"]["name"],cfg["insight"]["version"],http_timeout=http_timeout,validation_retries=validation_retries)
         traces=[AgentExecutionTrace(agent_name=cfg[role]["name"],agent_version=cfg[role]["version"],status="success",tool_calls=[call for call in calls() if call.agent_name==cfg[role]["name"]]) for role in ("investigator","predictor","insight")]
         return AnalysisResponse(status="ok",mode="foundry",audience=request.audience,match_id=request.match_id,question=request.question,investigator=inv,predictor=pred,insight=ins,tool_calls=calls(),traces=traces)
-    except (ValueError, FoundryResponseError) as exc: raise FoundryResponseError(str(exc)) from exc
+    except (ValueError, FoundryResponseError) as exc:
+        raise FoundryResponseError(str(exc), diagnostics=getattr(exc, "diagnostics", None)) from exc
     finally: await credential.close()
 
 async def run_foundry(request: AnalysisRequest) -> AnalysisResponse:
