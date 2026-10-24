@@ -19,6 +19,7 @@ sys.path.insert(0, ROOT)
 
 from app.agents.diagnostics import event, start_request
 from app.agents.provenance import agent_context, begin, calls
+from app.agents.isolated_diagnostics import parse_investigator_handoff
 
 
 def _print_tool_summary() -> None:
@@ -68,8 +69,28 @@ async def run_once(end_to_end_timeout: float, http_timeout: float, retries: int)
                     result = await asyncio.wait_for(agent.run(json.dumps(payload)), timeout=end_to_end_timeout)
                 event("sdk_run_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1, response_type=type(result).__name__)
                 event("sdk_http_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", request_kind="agent_run", status="sdk_response_received", latency_ms=round((time.perf_counter()-sdk_started)*1000))
-                print(getattr(result, "text", result))
+                try:
+                    handoff = parse_investigator_handoff(getattr(result, "text", result), "match-001")
+                except Exception as exc:
+                    event("agent_response_validation_failed", agent_name=name, agent_version=version, stage="investigator-diagnostic", failure_class="response_validation", error_type=type(exc).__name__)
+                    print(json.dumps({
+                        "status": "validation_error",
+                        "agent_name": name,
+                        "agent_version": version,
+                        "validation_error": str(exc),
+                        "partial_tool_provenance": [call.model_dump() for call in calls()],
+                    }, indent=2))
+                    raise SystemExit(1) from exc
                 event("final_agent_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1)
+                print(json.dumps({
+                    "status": "ok",
+                    "agent_name": name,
+                    "agent_version": version,
+                    "evidence": [item.model_dump() for item in handoff.evidence],
+                    "missing_information": handoff.missing_information,
+                    "evidence_validation": "passed",
+                    "python_tool_provenance": [call.model_dump() for call in calls()],
+                }, indent=2))
                 return
             except Exception as exc:
                 event("agent_invocation_failed", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1, failure_class="transport_or_tool_or_timeout", error_type=type(exc).__name__, latency_ms=round((time.perf_counter()-sdk_started)*1000))

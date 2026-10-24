@@ -11,10 +11,10 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
-from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_insight_handoff, parse_prediction_handoff, required_tool_verification
+from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_insight_handoff, parse_investigator_handoff, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
-from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_insight_instructions, repair_predictor_instructions, tool_schema, proposed
+from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_investigator_output_instructions, repair_insight_instructions, repair_predictor_instructions, tool_schema, proposed
 from app.repositories.synthetic import get_fixture
 client = TestClient(app)
 def test_tools_validate_and_use_real_data():
@@ -135,6 +135,17 @@ def test_response_validation_retries_once_but_transport_does_not():
     assert result == "good"
     assert agent.calls == 2
 
+def test_response_validation_zero_retries_fails_once():
+    class InvalidAgent:
+        calls = 0
+        async def run(self, prompt):
+            self.calls += 1
+            return type("Result", (), {"text": "invalid"})()
+    agent=InvalidAgent()
+    with pytest.raises(FoundryResponseError, match="0 validation retries"):
+        asyncio.run(_text(agent, {"match_id":"match-001"}, lambda text: (_ for _ in ()).throw(ValueError("bad JSON")), "investigator", "matchlens-investigator", "6", http_timeout=60, validation_retries=0))
+    assert agent.calls == 1
+
 def test_end_to_end_timeout_is_bounded_and_reported(monkeypatch):
     import app.agents.foundry_workflow as workflow
     async def slow_workflow(request):
@@ -235,6 +246,34 @@ def test_prediction_contract_rejects_old_flat_output():
     with pytest.raises(ValueError, match="exactly forecast"):
         parse_prediction_handoff(json.dumps({"status":"success", "home_win_probability":50, "player_projections":[], "scenario_comparisons":[]}))
 
+def _valid_investigator_payload():
+    return {"evidence":[{"record_type":"h2h", "record_id":"h2h:match-001:0", "statement":"Synthetic H2H result 1-0."}], "missing_information":[]}
+
+def test_investigator_contract_accepts_grounded_evidence():
+    parsed=parse_investigator_handoff(json.dumps(_valid_investigator_payload()), "match-001")
+    assert parsed.evidence[0].record_id == "h2h:match-001:0"
+
+def test_investigator_contract_rejects_legacy_flat_output():
+    with pytest.raises(ValueError, match="exactly evidence"):
+        parse_investigator_handoff(json.dumps({"status":"sufficient_data", "data_quality":"good"}), "match-001")
+
+def test_investigator_contract_rejects_missing_fields_and_malformed_evidence():
+    with pytest.raises(ValueError, match="exactly evidence"):
+        parse_investigator_handoff(json.dumps({"evidence":[]}), "match-001")
+    malformed={"evidence":[{"record_type":"h2h", "record_id":"h2h:match-001:0"}], "missing_information":[]}
+    with pytest.raises(ValueError, match="exactly record_type"):
+        parse_investigator_handoff(json.dumps(malformed), "match-001")
+
+def test_investigator_contract_rejects_unknown_evidence_id():
+    payload=_valid_investigator_payload()
+    payload["evidence"][0]["record_id"]="h2h:match-001:invented"
+    with pytest.raises(ValueError, match="Unsupported evidence"):
+        parse_investigator_handoff(json.dumps(payload), "match-001")
+
+def test_investigator_empty_evidence_fails_for_match_001():
+    with pytest.raises(ValueError, match="grounded evidence"):
+        parse_investigator_handoff(json.dumps({"evidence":[], "missing_information":["No records"]}), "match-001")
+
 def test_insight_contract_rejects_legacy_extra_keys():
     with pytest.raises(ValueError, match="exactly summary"):
         parse_insight_handoff(json.dumps({"summary":"ok", "bullets":[], "unsupported_claims":[], "contradictions":[], "status":"ok"}))
@@ -266,6 +305,14 @@ def test_predictor_prompt_replaces_legacy_output_fields():
     assert "forecast_timestamp" in repaired
     assert repaired.endswith("# Core Principle\nNever invent forecasts.")
 
+def test_investigator_prompt_replaces_legacy_output_fields():
+    existing="# Role\nKeep grounding rules.\n# Output\n- status\n- data_quality\n"
+    repaired=repair_investigator_output_instructions(existing)
+    assert "exactly these two top-level keys" in repaired
+    assert "record_type" in repaired and "record_id" in repaired and "statement" in repaired
+    assert "data_quality" in repaired
+    assert repaired.startswith("# Role\nKeep grounding rules.")
+
 def test_insight_prompt_replaces_legacy_output_fields():
     existing='# Role\nKeep validation rules.\n- If an important inconsistency is detected, set status to "needs_review" and describe the issue.\n# Output\n- status\n- headline\n'
     repaired=repair_insight_instructions(existing)
@@ -281,6 +328,7 @@ def test_workflow_uses_exact_prediction_contract_parser():
     from app.agents import foundry_workflow
     assert "parse_prediction_handoff" in inspect.getsource(foundry_workflow)
     assert "parse_insight_handoff" in inspect.getsource(foundry_workflow)
+    assert "parse_investigator_handoff" in inspect.getsource(foundry_workflow)
 
 def test_workflow_attributes_canonical_forecast_to_local_preparation():
     import inspect

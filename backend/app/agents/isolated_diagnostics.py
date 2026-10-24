@@ -64,6 +64,34 @@ def parse_insight_handoff(text: str) -> InsightHandoff:
         raise ValueError(f"Invalid InsightHandoff payload: {exc}") from exc
 
 
+def parse_investigator_handoff(text: str, match_id: str | None = None) -> InvestigatorHandoff:
+    """Require exact evidence fields and validate every evidence ID."""
+    try:
+        value = json.loads(text)
+        if not isinstance(value, dict) or set(value) != {"evidence", "missing_information"}:
+            raise ValueError("InvestigatorHandoff must have exactly evidence and missing_information")
+        if not isinstance(value["evidence"], list) or not isinstance(value["missing_information"], list):
+            raise ValueError("InvestigatorHandoff evidence and missing_information must be arrays")
+        for item in value["evidence"]:
+            if not isinstance(item, dict) or set(item) != {"record_type", "record_id", "statement"}:
+                raise ValueError("Each evidence item must have exactly record_type, record_id, statement")
+            if not all(isinstance(item[field], str) and item[field] for field in ("record_type", "record_id", "statement")):
+                raise ValueError("Evidence record_type, record_id, and statement must be nonempty strings")
+        if not all(isinstance(item, str) for item in value["missing_information"]):
+            raise ValueError("missing_information must be an array of strings")
+        if match_id == "match-001" and not value["evidence"]:
+            raise ValueError("InvestigatorHandoff requires grounded evidence for match-001")
+        handoff = InvestigatorHandoff.model_validate(value)
+        if match_id:
+            from app.agents.validation import valid_evidence_ids
+            unknown = sorted({item.record_id for item in handoff.evidence} - valid_evidence_ids(match_id))
+            if unknown:
+                raise ValueError(f"Unsupported evidence references: {', '.join(unknown)}")
+        return handoff
+    except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+        raise ValueError(f"Invalid InvestigatorHandoff payload: {exc}") from exc
+
+
 def _numbers(text: str) -> list[tuple[str, float]]:
     return [(token, float(token.rstrip("%"))) for token in re.findall(r"\d+(?:\.\d+)?%?", text)]
 

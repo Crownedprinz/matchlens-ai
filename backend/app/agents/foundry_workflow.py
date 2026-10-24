@@ -4,7 +4,7 @@ from app.agents.contracts import AnalysisRequest, AnalysisResponse, Investigator
 from app.agents import tools
 from app.agents.provenance import agent_context, begin, calls, execute
 from app.agents.validation import parse_json, validate_evidence
-from app.agents.isolated_diagnostics import parse_insight_handoff, parse_prediction_handoff, forecast_mismatches
+from app.agents.isolated_diagnostics import parse_insight_handoff, parse_investigator_handoff, parse_prediction_handoff, forecast_mismatches
 from app.agents.diagnostics import correlation_id, event
 from app.repositories.synthetic import players
 
@@ -72,7 +72,7 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
     investigator,predictor,insight=make("investigator"),make("predictor"),make("insight"); begin()
     try:
         inv_payload={"match_id":request.match_id,"minute":request.minute,"question":request.question,"required_output":"JSON InvestigatorHandoff with evidence and missing_information. Evidence IDs must refer to synthetic records."}
-        inv=validate_evidence(await _text(investigator,inv_payload,lambda text:parse_json(text,InvestigatorHandoff),"investigator",cfg["investigator"]["name"],cfg["investigator"]["version"],http_timeout=http_timeout,validation_retries=validation_retries),request.match_id)
+        inv=await _text(investigator,inv_payload,lambda text:parse_investigator_handoff(text, request.match_id),"investigator",cfg["investigator"]["name"],cfg["investigator"]["version"],http_timeout=http_timeout,validation_retries=validation_retries)
         event("agent_handoff_completed", from_agent=cfg["investigator"]["name"], to_agent=cfg["predictor"]["name"])
         canonical=execute("predict_match",tools.predict_match,PredictionArgs(match_id=request.match_id,minute=request.minute).model_dump(),agent_name="local-python-preparation",agent_version="local")
         expected_players = {

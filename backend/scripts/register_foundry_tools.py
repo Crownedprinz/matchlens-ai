@@ -135,6 +135,50 @@ def repair_investigator_instructions(instructions: str) -> str:
         repaired = repaired.replace(old, new)
     return repaired
 
+def repair_investigator_output_instructions(instructions: str) -> str:
+    """Replace only the legacy Investigator output contract."""
+    start = instructions.find("# Output")
+    if start < 0:
+        raise ValueError("Investigator instructions do not contain the expected output section")
+    replacement = '''# Output Format
+
+Return exactly one valid JSON object containing exactly these two top-level keys:
+
+- evidence
+- missing_information
+
+The response must conform to the MatchLens AI backend's `InvestigatorHandoff` contract.
+
+## evidence
+
+An array of grounded evidence objects. Every object must contain exactly these three string fields:
+
+- record_type
+- record_id
+- statement
+
+Use only records returned by the registered Python tools or explicitly supplied in the request. Every `record_id` must be copied exactly from an actual synthetic record and must use the repository's existing ID format. For match-001, return meaningful evidence when the registered tools provide it. Never invent records, IDs, players, results, statistics, or source references. If a record cannot be verified, omit it and explain the limitation in `missing_information`.
+
+## missing_information
+
+An array of strings describing genuine missing, unavailable, or unverifiable information. Preserve relevant data-quality limitations here rather than creating placeholder evidence.
+
+# Strict Output Requirements
+
+1. Return valid JSON only, without Markdown fences, introductory text, or commentary.
+2. Include exactly `evidence` and `missing_information` at the top level; do not add any other keys.
+3. `evidence` must be an array of objects with exactly `record_type`, `record_id`, and `statement`, all nonempty strings.
+4. `missing_information` must be an array of strings.
+5. Do not output legacy fields such as status, data_quality, match_id, teams, headline, key_findings, limitations, evidence_references, or any other extra fields.
+6. Ground every evidence statement in an actual authorized synthetic record and preserve its exact record identifier.
+7. Treat all hackathon records as synthetic and report uncertainty or missing data instead of guessing.
+
+# Core Principle
+
+The MatchLens Investigator provides trustworthy, evidence-grounded synthetic football records for downstream agents; it does not create predictions or unsupported facts.
+'''
+    return instructions[:start] + replacement
+
 def repair_predictor_instructions(instructions: str) -> str:
     """Return a read-only corrected prompt with the local PredictionHandoff contract."""
     start = instructions.find("# Output Format")
