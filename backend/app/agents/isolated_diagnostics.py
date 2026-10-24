@@ -26,7 +26,10 @@ def build_investigator_handoff(match_id: str) -> InvestigatorHandoff:
         EvidenceItem(record_type="player", record_id=f"player:{player.id}", statement=f"Synthetic player record for {player.name}.")
         for player in players(fixture.home_team_id) + players(fixture.away_team_id)
     )
-    return InvestigatorHandoff(evidence=evidence, missing_information=["Market odds and official lineup data are not in the synthetic dataset."])
+    return InvestigatorHandoff(evidence=evidence, missing_information=[
+        "Market odds and official lineup data are not in the synthetic dataset.",
+        "Player fitness, injuries, and suspension status are not in the synthetic dataset.",
+    ])
 
 
 def parse_prediction_handoff(text: str) -> PredictionHandoff:
@@ -43,6 +46,22 @@ def parse_prediction_handoff(text: str) -> PredictionHandoff:
         return PredictionHandoff.model_validate(value)
     except (json.JSONDecodeError, TypeError, ValidationError) as exc:
         raise ValueError(f"Invalid PredictionHandoff payload: {exc}") from exc
+
+
+def parse_insight_handoff(text: str) -> InsightHandoff:
+    """Require exactly the four fields in the InsightHandoff contract."""
+    try:
+        value = json.loads(text)
+        if not isinstance(value, dict) or set(value) != {"summary", "bullets", "unsupported_claims", "contradictions"}:
+            raise ValueError("InsightHandoff must have exactly summary, bullets, unsupported_claims, contradictions")
+        if not isinstance(value["summary"], str) or not isinstance(value["bullets"], list) or not all(isinstance(item, str) for item in value["bullets"]):
+            raise ValueError("InsightHandoff summary must be a string and bullets must be an array of strings")
+        for field in ("unsupported_claims", "contradictions"):
+            if not isinstance(value[field], list) or not all(isinstance(item, str) for item in value[field]):
+                raise ValueError(f"InsightHandoff {field} must be an array of strings")
+        return InsightHandoff.model_validate(value)
+    except (json.JSONDecodeError, TypeError, ValidationError) as exc:
+        raise ValueError(f"Invalid InsightHandoff payload: {exc}") from exc
 
 
 def _numbers(text: str) -> list[tuple[str, float]]:
@@ -62,15 +81,50 @@ def unsupported_insight_numbers(insight: InsightHandoff, investigator: Investiga
     return list(dict.fromkeys(unsupported))
 
 
+def _limitation_tokens(text: str) -> set[str]:
+    stop_words = {"a", "an", "and", "are", "be", "from", "in", "is", "not", "of", "or", "the", "to", "with"}
+    return {token.rstrip("s") for token in re.findall(r"[a-z0-9]+", text.lower()) if token not in stop_words and len(token) > 2}
+
+
+def supported_limitation_claims(insight: InsightHandoff, investigator: InvestigatorHandoff) -> list[str]:
+    """Classify limitation disclosures that are grounded in missing_information."""
+    known = [_limitation_tokens(item) for item in investigator.missing_information]
+    supported = []
+    for claim in insight.unsupported_claims:
+        claim_tokens = _limitation_tokens(claim)
+        if any(len(claim_tokens & limitation) >= 2 for limitation in known):
+            supported.append(claim)
+    return supported
+
+
+def supported_evidence_claims(insight: InsightHandoff, investigator: InvestigatorHandoff) -> list[str]:
+    """Recognize narrow, cautious claims that point back to supplied evidence."""
+    evidence_text = " ".join(item.statement for item in investigator.evidence).lower()
+    h2h_count = sum(1 for item in investigator.evidence if item.record_type == "h2h")
+    supported = []
+    for claim in insight.unsupported_claims:
+        lowered = claim.lower()
+        if "head-to-head" in lowered and "mixed" in lowered and h2h_count >= 2 and "result" in evidence_text:
+            supported.append(claim)
+    return supported
+
+
 def insight_check(insight: InsightHandoff, investigator: InvestigatorHandoff, prediction: PredictionHandoff) -> dict[str, Any]:
     unsupported = unsupported_insight_numbers(insight, investigator, prediction)
+    supported_limitations = supported_limitation_claims(insight, investigator)
+    supported_evidence = supported_evidence_claims(insight, investigator)
+    supported_claims = set(supported_limitations + supported_evidence)
+    genuine_unsupported = [claim for claim in insight.unsupported_claims if claim not in supported_claims]
     return {
         "unsupported_numerical_claims": unsupported,
         "unsupported_claims": insight.unsupported_claims,
+        "supported_limitations": supported_limitations,
+        "supported_evidence_claims": supported_evidence,
+        "genuine_unsupported_claims": genuine_unsupported,
         "contradictions": insight.contradictions,
         "semantic_accuracy": "not_proven_by_string_check",
         "review_required": True,
-        "valid": not insight.contradictions and not unsupported and not insight.unsupported_claims,
+        "valid": not insight.contradictions and not unsupported and not genuine_unsupported,
     }
 
 

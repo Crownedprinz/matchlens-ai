@@ -11,7 +11,7 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
-from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_prediction_handoff, required_tool_verification
+from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_insight_handoff, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
 from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_insight_instructions, repair_predictor_instructions, tool_schema, proposed
@@ -160,6 +160,36 @@ def test_insight_check_detects_numbers_and_contradictions():
     assert result["contradictions"] == ["conflict"]
     assert result["review_required"] is True
 
+def test_known_missing_data_limitation_does_not_fail_grounded_insight():
+    from app.agents.contracts import InsightHandoff, PredictionHandoff
+    prediction=PredictionHandoff(forecast=predict_match(PredictionArgs(match_id="match-001")), player_projections=[])
+    investigator=build_investigator_handoff("match-001")
+    insight=InsightHandoff(summary="The home side has a modest forecast edge.", bullets=[], unsupported_claims=["Any claim about official lineups is unverified because official lineup data is not provided."], contradictions=[])
+    result=insight_check(insight, investigator, prediction)
+    assert result["supported_limitations"] == insight.unsupported_claims
+    assert result["genuine_unsupported_claims"] == []
+    assert result["valid"] is True
+    assert result["review_required"] is True
+
+def test_cautious_h2h_claim_is_supported_by_supplied_evidence():
+    from app.agents.contracts import InsightHandoff, PredictionHandoff
+    prediction=PredictionHandoff(forecast=predict_match(PredictionArgs(match_id="match-001")), player_projections=[])
+    investigator=build_investigator_handoff("match-001")
+    claim="A claim that historical head-to-head dominance exists is not supported; the supplied results are mixed."
+    result=insight_check(InsightHandoff(summary="Grounded.", bullets=[], unsupported_claims=[claim], contradictions=[]), investigator, prediction)
+    assert result["supported_evidence_claims"] == [claim]
+    assert result["genuine_unsupported_claims"] == []
+
+def test_genuine_unsupported_insight_claim_remains_visible_and_fails():
+    from app.agents.contracts import InsightHandoff, PredictionHandoff
+    prediction=PredictionHandoff(forecast=predict_match(PredictionArgs(match_id="match-001")), player_projections=[])
+    investigator=build_investigator_handoff("match-001")
+    insight=InsightHandoff(summary="The home side has a modest forecast edge.", bullets=[], unsupported_claims=["The referee has a strong historical bias."], contradictions=[])
+    result=insight_check(insight, investigator, prediction)
+    assert result["unsupported_claims"] == insight.unsupported_claims
+    assert result["genuine_unsupported_claims"] == insight.unsupported_claims
+    assert result["valid"] is False
+
 def test_insight_report_includes_returned_prose_and_checks():
     from app.agents.contracts import InsightHandoff
     insight=InsightHandoff(summary="Home advantage matters.", bullets=["Synthetic form supports the conclusion."], unsupported_claims=["No odds data."], contradictions=[])
@@ -205,6 +235,14 @@ def test_prediction_contract_rejects_old_flat_output():
     with pytest.raises(ValueError, match="exactly forecast"):
         parse_prediction_handoff(json.dumps({"status":"success", "home_win_probability":50, "player_projections":[], "scenario_comparisons":[]}))
 
+def test_insight_contract_rejects_legacy_extra_keys():
+    with pytest.raises(ValueError, match="exactly summary"):
+        parse_insight_handoff(json.dumps({"summary":"ok", "bullets":[], "unsupported_claims":[], "contradictions":[], "status":"ok"}))
+
+def test_insight_contract_accepts_exact_nested_output():
+    parsed=parse_insight_handoff(json.dumps({"summary":"Grounded.", "bullets":["Supported."], "unsupported_claims":[], "contradictions":[]}))
+    assert parsed.summary == "Grounded."
+
 def test_prediction_contract_rejects_missing_forecast():
     with pytest.raises(ValueError, match="exactly forecast"):
         parse_prediction_handoff(json.dumps({"player_projections":[], "unsupported_scenarios":[]}))
@@ -242,6 +280,24 @@ def test_workflow_uses_exact_prediction_contract_parser():
     import inspect
     from app.agents import foundry_workflow
     assert "parse_prediction_handoff" in inspect.getsource(foundry_workflow)
+    assert "parse_insight_handoff" in inspect.getsource(foundry_workflow)
+
+def test_workflow_attributes_canonical_forecast_to_local_preparation():
+    import inspect
+    from app.agents import foundry_workflow
+    source=inspect.getsource(foundry_workflow)
+    assert 'agent_name="local-python-preparation"' in source
+    assert 'agent_name=cfg["predictor"]["name"]' not in source.split('canonical=execute', 1)[1].split('pred_payload', 1)[0]
+
+def test_comprehensive_reconciliation_catches_scores_and_player_values():
+    from app.agents.contracts import Forecast
+    canonical=predict_match(PredictionArgs(match_id="match-001"))
+    altered={**canonical, "current_home_score": 1}
+    returned=Forecast.model_validate(altered)
+    expected_player={"aurora-p1": {"player_id":"aurora-p1", "projected_goals":0.64, "projected_assists":0.3}}
+    mismatches=forecast_mismatches(returned, canonical, returned_players=[{"player_id":"aurora-p1", "projected_goals":9, "projected_assists":0.3}], expected_players=expected_player)
+    assert "forecast.current_home_score" in mismatches
+    assert "player_projections[aurora-p1].projected_goals" in mismatches
 
 def test_simulated_insight_response_is_validated_without_tool_calls():
     from app.agents.contracts import InsightHandoff
