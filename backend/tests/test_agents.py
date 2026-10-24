@@ -10,7 +10,7 @@ from app.agents.contracts import TeamFormArgs, PlayerStatsArgs, ScenarioArgs
 from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head, foundry_get_team_form
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
-from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
+from app.agents.foundry_workflow import FoundryConfigurationError, FoundryResponseError, _foundry_project_client, _text, reconcile_forecast
 from app.agents.diagnostics import exception_chain, foundry_request_route, safe_remote_error_metadata
 from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_insight_handoff, parse_investigator_handoff, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
@@ -262,6 +262,17 @@ def test_exception_chain_is_cycle_safe_and_deduplicated():
     chain=list(exception_chain(first))
     assert chain.count(first) == 1
     assert chain.count(second) == 1
+
+def test_api_key_project_client_requires_secret_and_uses_project_responses_base_url(monkeypatch):
+    monkeypatch.setenv("FOUNDRY_CREDENTIAL_MODE", "api_key")
+    monkeypatch.delenv("FOUNDRY_API_KEY", raising=False)
+    with pytest.raises(FoundryConfigurationError, match="FOUNDRY_API_KEY"):
+        _foundry_project_client("https://example.services.ai.azure.com/api/projects/demo")
+
+    monkeypatch.setenv("FOUNDRY_API_KEY", "test-only-key")
+    client = _foundry_project_client("https://example.services.ai.azure.com/api/projects/demo")
+    assert client._client.base_url == "https://example.services.ai.azure.com/api/projects/demo/openai/v1/"
+    asyncio.run(client.close())
 
 def test_permission_denied_is_reported_with_http_context_and_not_retried():
     class Response:

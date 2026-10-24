@@ -14,14 +14,40 @@ class FoundryResponseError(RuntimeError):
         super().__init__(message)
         self.diagnostics = diagnostics
 def _foundry_credential():
-    """Use managed identity in Azure and Azure CLI credentials locally."""
+    """Use managed identity, Azure CLI, or the explicitly configured API key."""
     from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
     mode = os.getenv("FOUNDRY_CREDENTIAL_MODE", "azure_cli").lower()
+    if mode == "api_key":
+        return None
     if mode == "managed_identity":
         return ManagedIdentityCredential(client_id=os.getenv("AZURE_CLIENT_ID") or None)
     if mode == "azure_cli":
         return AzureCliCredential()
-    raise FoundryConfigurationError("FOUNDRY_CREDENTIAL_MODE must be 'managed_identity' or 'azure_cli'")
+    raise FoundryConfigurationError("FOUNDRY_CREDENTIAL_MODE must be 'managed_identity', 'azure_cli', or 'api_key'")
+
+
+class _ApiKeyProjectClient:
+    """Minimal project-client adapter for the OpenAI-compatible Foundry API-key path."""
+
+    def __init__(self, endpoint: str, api_key: str):
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(api_key=api_key, base_url=endpoint.rstrip("/") + "/openai/v1")
+
+    def get_openai_client(self, **_kwargs):
+        return self._client
+
+    async def close(self):
+        await self._client.close()
+
+
+def _foundry_project_client(endpoint: str):
+    if os.getenv("FOUNDRY_CREDENTIAL_MODE", "azure_cli").lower() != "api_key":
+        return None
+    api_key = os.getenv("FOUNDRY_API_KEY", "")
+    if not api_key:
+        raise FoundryConfigurationError("FOUNDRY_API_KEY is required when FOUNDRY_CREDENTIAL_MODE=api_key")
+    return _ApiKeyProjectClient(endpoint, api_key)
 def _result_text(result) -> str:
     text=getattr(result,"text",None)
     if isinstance(text,str): return text
@@ -81,7 +107,12 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
     validation_retries=int(os.getenv("FOUNDRY_VALIDATION_RETRIES", "0"))
     if validation_retries < 0:
         raise FoundryConfigurationError("FOUNDRY_VALIDATION_RETRIES must be zero or greater")
-    credential=_foundry_credential(); common={"project_endpoint":cfg["endpoint"],"credential":credential,"timeout":http_timeout}
+    credential=_foundry_credential(); project_client=_foundry_project_client(cfg["endpoint"])
+    common={"timeout":http_timeout}
+    if project_client is not None:
+        common["project_client"] = project_client
+    else:
+        common.update({"project_endpoint":cfg["endpoint"],"credential":credential})
     def make(role):
         item=cfg[role]; tool_names={"investigator":["get_head_to_head","get_team_form","get_player_stats","get_match_context"],"predictor":["predict_match","predict_player","get_model_explanation"],"insight":[]}[role]
         agent = FoundryAgent(**common,agent_name=item["name"],agent_version=item["version"],tools=[FOUNDRY_FUNCTIONS[name] for name in tool_names])
@@ -109,7 +140,11 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
         return AnalysisResponse(status="ok",mode="foundry",audience=request.audience,match_id=request.match_id,question=request.question,investigator=inv,predictor=pred,insight=ins,tool_calls=calls(),traces=traces)
     except (ValueError, FoundryResponseError) as exc:
         raise FoundryResponseError(str(exc), diagnostics=getattr(exc, "diagnostics", None)) from exc
-    finally: await credential.close()
+    finally:
+        if project_client is not None:
+            await project_client.close()
+        elif credential is not None:
+            await credential.close()
 
 async def run_foundry(request: AnalysisRequest) -> AnalysisResponse:
     """Run the workflow under an application deadline independent of HTTP timeout."""
