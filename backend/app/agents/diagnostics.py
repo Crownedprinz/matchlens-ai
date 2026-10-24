@@ -71,32 +71,76 @@ def safe_remote_error_metadata(exc: BaseException) -> dict[str, Any]:
         except (TypeError, ValueError):
             return None
 
-    def code_for(candidate: BaseException):
-        value = getattr(candidate, "code", None) or getattr(candidate, "error_code", None)
+    def response_body_for(candidate: BaseException):
+        response = response_for(candidate)
         body = getattr(candidate, "body", None)
         if isinstance(body, dict):
-            body_error = body.get("error", body)
-            if isinstance(body_error, dict):
-                value = value or body_error.get("code") or body_error.get("type")
-        return str(value)[:160] if isinstance(value, (str, int)) else None
+            return body
+        json_method = getattr(response, "json", None)
+        if callable(json_method):
+            try:
+                body = json_method()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                return body
+        return None
 
-    def safe_id(value: Any):
+    def error_body_for(candidate: BaseException):
+        body = response_body_for(candidate)
+        error = body.get("error") if isinstance(body, dict) else None
+        return error if isinstance(error, dict) else body if isinstance(body, dict) else None
+
+    def code_for(candidate: BaseException):
+        value = getattr(candidate, "code", None) or getattr(candidate, "error_code", None)
+        body_error = error_body_for(candidate)
+        value = value or body_error.get("code") if body_error else value
+        value = value or body_error.get("type") if body_error else value
+        return safe_field(value)
+
+    def safe_field(value: Any):
         if not isinstance(value, str) or not 1 <= len(value) <= 160:
             return None
         return value if re.fullmatch(r"[A-Za-z0-9._:/-]+", value) else None
 
+    def safe_details_for(candidate: BaseException):
+        error = error_body_for(candidate)
+        if not error:
+            return None
+        details: dict[str, Any] = {}
+        for source_key, output_key in (("type", "type"), ("target", "target"), ("param", "param")):
+            value = safe_field(error.get(source_key))
+            if value:
+                details[output_key] = value
+        nested = error.get("details")
+        if isinstance(nested, list):
+            safe_nested = []
+            for item in nested[:8]:
+                if not isinstance(item, dict):
+                    continue
+                safe_item = {
+                    key: value
+                    for key in ("code", "type", "target")
+                    if (value := safe_field(item.get(key)))
+                }
+                if safe_item:
+                    safe_nested.append(safe_item)
+            if safe_nested:
+                details["details"] = safe_nested
+        return details or None
+
     def request_id_for(candidate: BaseException):
         response = response_for(candidate)
         headers = getattr(response, "headers", None) or getattr(candidate, "headers", None) or {}
+        try:
+            header_values = {str(key).lower(): value for key, value in headers.items()}
+        except AttributeError:
+            header_values = {}
         for header_name in ("x-ms-request-id", "x-request-id", "request-id", "traceparent"):
-            try:
-                value = headers.get(header_name)
-            except AttributeError:
-                value = None
-            safe_value = safe_id(value)
+            safe_value = safe_field(header_values.get(header_name))
             if safe_value:
                 return safe_value
-        return safe_id(getattr(candidate, "request_id", None))
+        return safe_field(getattr(candidate, "request_id", None))
 
     root = detail_candidates[-1] if detail_candidates else exc
     for candidate in detail_candidates:
@@ -107,12 +151,14 @@ def safe_remote_error_metadata(exc: BaseException) -> dict[str, Any]:
     status_code = next((value for candidate in detail_candidates if (value := status_for(candidate)) is not None), None)
     error_code = next((value for candidate in detail_candidates if (value := code_for(candidate))), None)
     request_id = next((value for candidate in detail_candidates if (value := request_id_for(candidate))), None)
+    service_details = next((value for candidate in detail_candidates if (value := safe_details_for(candidate))), None)
     return {
         "outer_exception_type": type(exc).__name__,
         "root_exception_type": type(root).__name__,
         "http_status": status_code,
         "error_code": error_code,
         "request_id": request_id,
+        "service_details": service_details,
     }
 
 

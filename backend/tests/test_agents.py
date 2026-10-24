@@ -201,6 +201,7 @@ def test_wrapped_permission_denied_prefers_root_http_details():
         "http_status":403,
         "error_code":"PermissionDenied",
         "request_id":"safe-request-123",
+        "service_details": None,
     }
     assert "Bearer" not in json.dumps(metadata)
     assert "prompt" not in json.dumps(metadata)
@@ -218,6 +219,41 @@ def test_exception_metadata_handles_missing_and_malformed_details_without_fabric
     bad=safe_remote_error_metadata(BadHeaders())
     assert bad["request_id"] is None
     assert bad["error_code"] is None
+    assert bad["service_details"] is None
+
+def test_remote_error_metadata_reads_http_status_body_and_case_insensitive_headers():
+    class Response:
+        status_code=403
+        headers={"X-MS-REQUEST-ID":"azure-request-456", "Authorization":"Bearer hidden"}
+        def json(self):
+            return {
+                "error": {
+                    "code": "PermissionDenied",
+                    "type": "authorization_error",
+                    "target": "agents",
+                    "message": "Bearer hidden prompt text",
+                    "details": [
+                        {"code": "RoleMissing", "target": "project"},
+                        {"message": "do not expose"},
+                    ],
+                }
+            }
+    class HTTPStatusError(Exception):
+        response=Response()
+
+    metadata=safe_remote_error_metadata(Exception("wrapper", HTTPStatusError("raw secret")))
+    assert metadata["http_status"] == 403
+    assert metadata["error_code"] == "PermissionDenied"
+    assert metadata["request_id"] == "azure-request-456"
+    assert metadata["service_details"] == {
+        "type":"authorization_error",
+        "target":"agents",
+        "details":[{"code":"RoleMissing", "target":"project"}],
+    }
+    serialized=json.dumps(metadata)
+    assert "Bearer" not in serialized
+    assert "prompt" not in serialized
+    assert "hidden" not in serialized
 
 def test_exception_chain_is_cycle_safe_and_deduplicated():
     first=Exception("first")
