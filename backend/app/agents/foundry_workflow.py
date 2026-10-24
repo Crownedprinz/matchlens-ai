@@ -4,6 +4,7 @@ from app.agents.contracts import AnalysisRequest, AnalysisResponse, Investigator
 from app.agents import tools
 from app.agents.provenance import agent_context, begin, calls, execute
 from app.agents.validation import parse_json, validate_evidence
+from app.agents.isolated_diagnostics import parse_prediction_handoff
 from app.agents.diagnostics import correlation_id, event
 
 class FoundryConfigurationError(RuntimeError): pass
@@ -71,7 +72,7 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
         event("agent_handoff_completed", from_agent=cfg["investigator"]["name"], to_agent=cfg["predictor"]["name"])
         canonical=execute("predict_match",tools.predict_match,PredictionArgs(match_id=request.match_id,minute=request.minute).model_dump(),agent_name=cfg["predictor"]["name"],agent_version=cfg["predictor"]["version"])
         pred_payload={"match_id":request.match_id,"minute":request.minute,"investigator":inv.model_dump(),"canonical_python_forecast":canonical,"required_output":"JSON PredictionHandoff. Preserve canonical forecast values exactly; unsupported_scenarios must be explicit."}
-        pred=await _text(predictor,pred_payload,lambda text:parse_json(text,PredictionHandoff),"predictor",cfg["predictor"]["name"],cfg["predictor"]["version"],http_timeout=http_timeout)
+        pred=await _text(predictor,pred_payload,parse_prediction_handoff,"predictor",cfg["predictor"]["name"],cfg["predictor"]["version"],http_timeout=http_timeout)
         reconcile_forecast(pred.forecast.model_dump(),canonical)
         event("agent_handoff_completed", from_agent=cfg["predictor"]["name"], to_agent=cfg["insight"]["name"])
         ins_payload={"audience":request.audience,"question":request.question,"investigator":inv.model_dump(),"prediction":pred.model_dump(),"required_output":"JSON InsightHandoff with summary, bullets, unsupported_claims, contradictions. Do not add statistics."}

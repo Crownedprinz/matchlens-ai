@@ -1,0 +1,70 @@
+"""Safely preview or create a new Predictor Prompt Agent version.
+
+Default mode is read-only. ``--apply`` creates one new version only after
+confirming that the requested source version and all protected fields match.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.register_foundry_tools import repair_predictor_instructions, snapshot
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true", help="Create one new remote Predictor version")
+    args = parser.parse_args()
+    endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+    name = os.getenv("FOUNDRY_PREDICTOR_NAME", "matchlens-predictor")
+    source_version = os.getenv("FOUNDRY_PREDICTOR_VERSION")
+    if not endpoint or not source_version:
+        raise SystemExit("FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_PREDICTOR_VERSION are required")
+    try:
+        from azure.ai.projects import AIProjectClient
+        from azure.ai.projects.models import PromptAgentDefinition, FunctionTool
+        from azure.identity import DefaultAzureCredential
+    except ImportError as exc:
+        raise SystemExit("Install requirements-foundry.txt for Foundry version management") from exc
+
+    project = AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential())
+    try:
+        existing = snapshot(project.agents.get_version(name, source_version), name, source_version)
+        if existing["version"] != source_version:
+            raise RuntimeError(f"Requested source version {source_version}, inspected {existing['version']}")
+        revised = repair_predictor_instructions(existing["instructions"] or "")
+        if revised == existing["instructions"]:
+            raise RuntimeError("Predictor instructions are already corrected; refusing duplicate version")
+        definition_payload = dict(existing["definition"])
+        definition_payload["model"] = existing["model"]
+        definition_payload["instructions"] = revised
+        definition_payload["tools"] = [
+            FunctionTool(name=tool["name"], description=tool.get("description", ""), parameters=tool["parameters"], strict=True)
+            for tool in existing["tools"]
+        ]
+        print(json.dumps({
+            "mode": "apply" if args.apply else "dry-run",
+            "source": {"name": name, "version": source_version},
+            "proposed": {"model": existing["model"], "tool_names": [tool["name"] for tool in existing["tools"]], "tool_count": len(existing["tools"]), "other_config": existing["other_config"], "instructions_changed": True},
+            "preserved": {"model": True, "tools": True, "other_definition_fields": sorted(key for key in existing["definition"] if key not in {"instructions", "tools"})},
+            "remote_mutation": bool(args.apply),
+        }, indent=2))
+        if not args.apply:
+            print("dry-run complete; no remote mutation performed")
+            return
+        created = project.agents.create_version(agent_name=name, definition=PromptAgentDefinition(**definition_payload))
+        print(json.dumps({"created_agent": name, "created_version": getattr(created, "version", "<unknown>")}, indent=2))
+    finally:
+        close = getattr(project, "close", None)
+        if close:
+            close()
+
+
+if __name__ == "__main__":
+    main()

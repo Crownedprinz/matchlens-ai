@@ -219,6 +219,11 @@ def test_predictor_prompt_replaces_legacy_output_fields():
     assert "forecast_timestamp" in repaired
     assert repaired.endswith("# Core Principle\nNever invent forecasts.")
 
+def test_workflow_uses_exact_prediction_contract_parser():
+    import inspect
+    from app.agents import foundry_workflow
+    assert "parse_prediction_handoff" in inspect.getsource(foundry_workflow)
+
 def test_simulated_insight_response_is_validated_without_tool_calls():
     from app.agents.contracts import InsightHandoff
     class InsightAgent:
