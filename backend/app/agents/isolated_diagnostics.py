@@ -77,6 +77,9 @@ def parse_investigator_handoff(text: str, match_id: str | None = None) -> Invest
                 raise ValueError("Each evidence item must have exactly record_type, record_id, statement")
             if not all(isinstance(item[field], str) and item[field] for field in ("record_type", "record_id", "statement")):
                 raise ValueError("Evidence record_type, record_id, and statement must be nonempty strings")
+            prefix = item["record_id"].split(":", 1)[0]
+            if item["record_type"] != prefix or prefix not in {"h2h", "form", "player"}:
+                raise ValueError("Evidence record_type must agree with the record_id prefix")
         if not all(isinstance(item, str) for item in value["missing_information"]):
             raise ValueError("missing_information must be an array of strings")
         if match_id == "match-001" and not value["evidence"]:

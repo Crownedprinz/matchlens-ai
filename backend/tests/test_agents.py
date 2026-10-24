@@ -20,6 +20,19 @@ client = TestClient(app)
 def test_tools_validate_and_use_real_data():
     result = get_head_to_head(HeadToHeadArgs(match_id="match-001")); assert len(result["records"]) == 5
     forecast = predict_match(PredictionArgs(match_id="match-001")); assert abs(sum(forecast[x] for x in ("home_win_probability","draw_probability","away_win_probability"))-100) < .1
+
+def test_investigator_tool_records_use_canonical_evidence_ids():
+    from app.agents.contracts import PlayerStatsArgs, TeamFormArgs
+    from app.agents.tools import get_player_stats, get_team_form
+    from app.agents.validation import valid_evidence_ids
+    allowed=valid_evidence_ids("match-001")
+    h2h_result=get_head_to_head(HeadToHeadArgs(match_id="match-001"))
+    form_result=get_team_form(TeamFormArgs(match_id="match-001", team_side="home"))
+    player_result=get_player_stats(PlayerStatsArgs(match_id="match-001"))
+    records=h2h_result["records"] + form_result["records"] + player_result["players"]
+    assert records
+    assert all(record["record_id"] in allowed for record in records)
+    assert all(record["record_type"] == record["record_id"].split(":", 1)[0] for record in records)
 def test_analysis_mock_is_structured(monkeypatch):
     monkeypatch.setenv("AGENT_MODE", "mock")
     response = client.post("/api/analysis", json={"match_id":"match-001","audience":"fantasy","question":"Which attacker has the strongest projected return?"})
@@ -270,6 +283,12 @@ def test_investigator_contract_rejects_unknown_evidence_id():
     with pytest.raises(ValueError, match="Unsupported evidence"):
         parse_investigator_handoff(json.dumps(payload), "match-001")
 
+def test_investigator_contract_rejects_record_type_prefix_mismatch():
+    payload=_valid_investigator_payload()
+    payload["evidence"][0]["record_type"]="form"
+    with pytest.raises(ValueError, match="record_type"):
+        parse_investigator_handoff(json.dumps(payload), "match-001")
+
 def test_investigator_empty_evidence_fails_for_match_001():
     with pytest.raises(ValueError, match="grounded evidence"):
         parse_investigator_handoff(json.dumps({"evidence":[], "missing_information":["No records"]}), "match-001")
@@ -312,6 +331,11 @@ def test_investigator_prompt_replaces_legacy_output_fields():
     assert "record_type" in repaired and "record_id" in repaired and "statement" in repaired
     assert "data_quality" in repaired
     assert repaired.startswith("# Role\nKeep grounding rules.")
+
+def test_investigator_prompt_preserves_instructions_after_legacy_output():
+    existing="# Role\nKeep grounding rules.\n# Output\n- status\n# Additional Safeguard\nNever use external sources."
+    repaired=repair_investigator_output_instructions(existing)
+    assert repaired.endswith("# Additional Safeguard\nNever use external sources.")
 
 def test_insight_prompt_replaces_legacy_output_fields():
     existing='# Role\nKeep validation rules.\n- If an important inconsistency is detected, set status to "needs_review" and describe the issue.\n# Output\n- status\n- headline\n'

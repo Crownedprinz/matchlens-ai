@@ -5,13 +5,13 @@ from app.forecasting.poisson import forecast
 from app.repositories.synthetic import data, get_fixture, team, players, h2h, form, events
 def get_head_to_head(args: HeadToHeadArgs) -> dict[str, Any]:
     args = HeadToHeadArgs.model_validate(args)
-    get_fixture(args.match_id); return {"match_id": args.match_id, "records": [x.model_dump() for x in h2h(args.match_id)]}
+    get_fixture(args.match_id); return {"match_id": args.match_id, "records": [{**x.model_dump(), "record_type": "h2h", "record_id": f"h2h:{args.match_id}:{index}"} for index, x in enumerate(h2h(args.match_id))]}
 def get_team_form(args: TeamFormArgs) -> dict[str, Any]:
     args = TeamFormArgs.model_validate(args)
-    fixture = get_fixture(args.match_id); team_id = fixture.home_team_id if args.team_side == "home" else fixture.away_team_id; return {"match_id": args.match_id, "team_side": args.team_side, "team_id": team_id, "records": [x.model_dump() for x in form(team_id)]}
+    fixture = get_fixture(args.match_id); team_id = fixture.home_team_id if args.team_side == "home" else fixture.away_team_id; return {"match_id": args.match_id, "team_side": args.team_side, "team_id": team_id, "records": [{**x.model_dump(), "record_type": "form", "record_id": f"form:{team_id}:{index}"} for index, x in enumerate(form(team_id))]}
 def get_player_stats(args: PlayerStatsArgs) -> dict[str, Any]:
     args = PlayerStatsArgs.model_validate(args)
-    fixture = get_fixture(args.match_id); ids = [fixture.home_team_id, fixture.away_team_id] if args.team_side is None else [fixture.home_team_id if args.team_side == "home" else fixture.away_team_id]; return {"match_id": args.match_id, "players": [x.model_dump() for team_id in ids for x in players(team_id)]}
+    fixture = get_fixture(args.match_id); ids = [fixture.home_team_id, fixture.away_team_id] if args.team_side is None else [fixture.home_team_id if args.team_side == "home" else fixture.away_team_id]; return {"match_id": args.match_id, "players": [{**x.model_dump(), "record_type": "player", "record_id": f"player:{x.id}"} for team_id in ids for x in players(team_id)]}
 def get_match_context(args: MatchContextArgs) -> dict[str, Any]:
     args = MatchContextArgs.model_validate(args)
     fixture = get_fixture(args.match_id); return {"match": fixture.model_dump(), "home_team": team(fixture.home_team_id).model_dump(), "away_team": team(fixture.away_team_id).model_dump(), "minute": args.minute, "events_revealed": [x.model_dump() for x in events(args.match_id) if x.minute <= args.minute]}

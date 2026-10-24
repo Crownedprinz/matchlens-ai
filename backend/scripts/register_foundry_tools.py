@@ -137,9 +137,12 @@ def repair_investigator_instructions(instructions: str) -> str:
 
 def repair_investigator_output_instructions(instructions: str) -> str:
     """Replace only the legacy Investigator output contract."""
+    import re
     start = instructions.find("# Output")
     if start < 0:
         raise ValueError("Investigator instructions do not contain the expected output section")
+    suffix_match = re.search(r"\n# (?!Output(?: Format)?\b)", instructions[start + len("# Output"):])
+    suffix = instructions[start + len("# Output") + suffix_match.start() + 1:] if suffix_match else ""
     replacement = '''# Output Format
 
 Return exactly one valid JSON object containing exactly these two top-level keys:
@@ -177,7 +180,7 @@ An array of strings describing genuine missing, unavailable, or unverifiable inf
 
 The MatchLens Investigator provides trustworthy, evidence-grounded synthetic football records for downstream agents; it does not create predictions or unsupported facts.
 '''
-    return instructions[:start] + replacement
+    return instructions[:start] + replacement + ("\n" + suffix if suffix else "")
 
 def repair_predictor_instructions(instructions: str) -> str:
     """Return a read-only corrected prompt with the local PredictionHandoff contract."""
