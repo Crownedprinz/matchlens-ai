@@ -12,14 +12,24 @@ import json
 import logging
 import os
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from app.agents.diagnostics import event, start_request
+from app.agents.provenance import agent_context, begin, calls
 
 
-async def run_once(timeout: float, retries: int) -> None:
+def _print_tool_summary() -> None:
+    summary = [{"tool": call.name, "agent_name": call.agent_name, "agent_version": call.agent_version,
+                "argument_keys": sorted(call.arguments), "duration_ms": call.duration_ms,
+                "outcome": call.outcome, "output_ids": call.output_ids}
+               for call in calls() if call.outcome == "success"]
+    print(json.dumps({"successful_python_tools": summary}, separators=(",", ":")))
+
+
+async def run_once(end_to_end_timeout: float, http_timeout: float, retries: int) -> None:
     from agent_framework.foundry import FoundryAgent
     from azure.identity.aio import AzureCliCredential
     from app.agents.foundry_tools import FOUNDRY_FUNCTIONS
@@ -37,7 +47,7 @@ async def run_once(timeout: float, retries: int) -> None:
             agent_name=name,
             agent_version=version,
             credential=credential,
-            timeout=timeout,
+            timeout=http_timeout,
             tools=[FOUNDRY_FUNCTIONS[tool] for tool in (
                 "get_head_to_head", "get_team_form", "get_player_stats", "get_match_context"
             )],
@@ -51,14 +61,18 @@ async def run_once(timeout: float, retries: int) -> None:
         }
         for attempt in range(retries + 1):
             event("agent_invocation_started", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1)
+            event("sdk_http_request_started", agent_name=name, agent_version=version, stage="investigator-diagnostic", request_kind="agent_run", timeout_seconds=http_timeout)
+            sdk_started=time.perf_counter()
             try:
-                result = await asyncio.wait_for(agent.run(json.dumps(payload)), timeout=timeout)
-                event("remote_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1, response_type=type(result).__name__)
+                with agent_context(name, version):
+                    result = await asyncio.wait_for(agent.run(json.dumps(payload)), timeout=end_to_end_timeout)
+                event("sdk_run_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1, response_type=type(result).__name__)
+                event("sdk_http_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", request_kind="agent_run", status="sdk_response_received", latency_ms=round((time.perf_counter()-sdk_started)*1000))
                 print(getattr(result, "text", result))
                 event("final_agent_response_received", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1)
                 return
             except Exception as exc:
-                event("agent_invocation_failed", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1, error_type=type(exc).__name__)
+                event("agent_invocation_failed", agent_name=name, agent_version=version, stage="investigator-diagnostic", attempt=attempt + 1, failure_class="transport_or_tool_or_timeout", error_type=type(exc).__name__, latency_ms=round((time.perf_counter()-sdk_started)*1000))
                 if attempt >= retries:
                     raise
     finally:
@@ -68,17 +82,22 @@ async def run_once(timeout: float, retries: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--confirm-live", action="store_true", help="Authorize one or more bounded live Foundry calls")
-    parser.add_argument("--timeout", type=float, default=30.0, help="Per-attempt timeout in seconds (default: 30)")
+    parser.add_argument("--timeout", type=float, default=90.0, help="Bounded end-to-end timeout per attempt (default: 90)")
+    parser.add_argument("--http-timeout", type=float, default=float(os.getenv("FOUNDRY_TIMEOUT_SECONDS", "60")), help="Foundry SDK HTTP timeout (default: FOUNDRY_TIMEOUT_SECONDS or 60)")
     parser.add_argument("--retries", type=int, default=0, help="Additional attempts after failure (default: 0)")
     args = parser.parse_args()
-    if args.timeout <= 0 or args.retries < 0:
-        raise SystemExit("--timeout must be positive and --retries cannot be negative")
+    if args.timeout <= 0 or args.http_timeout <= 0 or args.retries < 0:
+        raise SystemExit("--timeout and --http-timeout must be positive and --retries cannot be negative")
     if not args.confirm_live:
         print("diagnostic not run; pass --confirm-live to authorize a bounded live Foundry call")
         return
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     start_request()
-    asyncio.run(run_once(args.timeout, args.retries))
+    begin()
+    try:
+        asyncio.run(run_once(args.timeout, args.http_timeout, args.retries))
+    finally:
+        _print_tool_summary()
 
 
 if __name__ == "__main__":

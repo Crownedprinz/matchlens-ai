@@ -8,8 +8,8 @@ from app.agents.tools import get_head_to_head, predict_match
 from app.agents.contracts import TeamFormArgs, PlayerStatsArgs, ScenarioArgs
 from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head, foundry_get_team_form
 from app.agents.schema import normalize_foundry_schema
-from app.agents.provenance import begin, calls
-from app.agents.foundry_workflow import reconcile_forecast
+from app.agents.provenance import agent_context, begin, calls
+from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
 from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, tool_schema, proposed
@@ -91,6 +91,56 @@ def test_simulated_foundry_function_call_executes_and_continues_with_output():
     assert continuation["type"] == "function_call_output"
     assert recorded[0].name == "get_head_to_head"
     assert recorded[0].outcome == "success"
+
+def test_multiple_simulated_calls_are_attributed_and_continue_with_real_outputs():
+    async def simulated_turn():
+        begin()
+        with agent_context("matchlens-investigator", "6"):
+            outputs=[]
+            for index, name, arguments in (
+                ("offline-call-1", "get_head_to_head", {"match_id":"match-001"}),
+                ("offline-call-2", "get_match_context", {"match_id":"match-001", "minute":0}),
+            ):
+                result=await FOUNDRY_FUNCTIONS[name].invoke(arguments=arguments, tool_call_id=index)
+                outputs.append({"type":"function_call_output", "call_id":index, "output":result})
+            return outputs, calls()
+    outputs, recorded=asyncio.run(simulated_turn())
+    assert [item["call_id"] for item in outputs] == ["offline-call-1", "offline-call-2"]
+    assert [call.name for call in recorded] == ["get_head_to_head", "get_match_context"]
+    assert all(call.agent_name == "matchlens-investigator" and call.agent_version == "6" for call in recorded)
+    assert all(call.duration_ms >= 0 and call.outcome == "success" for call in recorded)
+    assert all(call.output_ids for call in recorded)
+
+def test_transport_timeout_is_not_retried():
+    class TimeoutAgent:
+        calls = 0
+        async def run(self, prompt):
+            self.calls += 1
+            raise TimeoutError("simulated timeout")
+    agent=TimeoutAgent()
+    with pytest.raises(FoundryResponseError, match="invocation failed"):
+        asyncio.run(_text(agent, {"match_id":"match-001"}, lambda text: text, "investigator", "matchlens-investigator", "6", http_timeout=60))
+    assert agent.calls == 1
+
+def test_response_validation_retries_once_but_transport_does_not():
+    class ValidationAgent:
+        calls = 0
+        async def run(self, prompt):
+            self.calls += 1
+            return type("Result", (), {"text": "bad" if self.calls == 1 else "good"})()
+    agent=ValidationAgent()
+    result=asyncio.run(_text(agent, {"match_id":"match-001"}, lambda text: (_ for _ in ()).throw(ValueError("bad JSON")) if text == "bad" else text, "investigator", "matchlens-investigator", "6", http_timeout=60))
+    assert result == "good"
+    assert agent.calls == 2
+
+def test_end_to_end_timeout_is_bounded_and_reported(monkeypatch):
+    import app.agents.foundry_workflow as workflow
+    async def slow_workflow(request):
+        await asyncio.sleep(0.05)
+    monkeypatch.setattr(workflow, "_run_foundry", slow_workflow)
+    monkeypatch.setenv("FOUNDRY_END_TO_END_TIMEOUT_SECONDS", "0.001")
+    with pytest.raises(FoundryResponseError, match="end-to-end timeout"):
+        asyncio.run(workflow.run_foundry(__import__("app.agents.contracts", fromlist=["AnalysisRequest"]).AnalysisRequest(match_id="match-001", question="Why?")))
 def test_unsupported_scenario_is_not_registered():
     assert "simulate_scenario" not in AGENTS["predictor"]["tools"]
     with pytest.raises(Exception): __import__("app.agents.tools",fromlist=["simulate_scenario"]).simulate_scenario(ScenarioArgs(match_id="match-001",home_goals=1))
