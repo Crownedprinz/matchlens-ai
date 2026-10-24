@@ -720,7 +720,7 @@
     {
       "team_id": "aurora",
       "date": "2026-10-10",
-      "opponent": "Rivergate FC",
+      "opponent": "Northstar United",
       "venue": "H",
       "score": "1-0",
       "outcome": "W",
@@ -730,7 +730,7 @@
     {
       "team_id": "aurora",
       "date": "2026-10-09",
-      "opponent": "Cobalt Athletic",
+      "opponent": "Rivergate FC",
       "venue": "A",
       "score": "2-2",
       "outcome": "D",
@@ -740,7 +740,7 @@
     {
       "team_id": "aurora",
       "date": "2026-10-08",
-      "opponent": "Aurora City",
+      "opponent": "Cobalt Athletic",
       "venue": "H",
       "score": "3-1",
       "outcome": "W",
@@ -770,7 +770,7 @@
     {
       "team_id": "northstar",
       "date": "2026-10-10",
-      "opponent": "Northstar United",
+      "opponent": "Aurora City",
       "venue": "H",
       "score": "1-0",
       "outcome": "W",
@@ -810,7 +810,7 @@
     {
       "team_id": "northstar",
       "date": "2026-10-06",
-      "opponent": "Northstar United",
+      "opponent": "Rivergate FC",
       "venue": "H",
       "score": "2-2",
       "outcome": "D",
@@ -820,7 +820,7 @@
     {
       "team_id": "rivergate",
       "date": "2026-10-10",
-      "opponent": "Northstar United",
+      "opponent": "Aurora City",
       "venue": "H",
       "score": "1-0",
       "outcome": "W",
@@ -830,7 +830,7 @@
     {
       "team_id": "rivergate",
       "date": "2026-10-09",
-      "opponent": "Rivergate FC",
+      "opponent": "Northstar United",
       "venue": "A",
       "score": "2-2",
       "outcome": "D",
@@ -870,7 +870,7 @@
     {
       "team_id": "cobalt",
       "date": "2026-10-10",
-      "opponent": "Rivergate FC",
+      "opponent": "Aurora City",
       "venue": "H",
       "score": "1-0",
       "outcome": "W",
@@ -880,7 +880,7 @@
     {
       "team_id": "cobalt",
       "date": "2026-10-09",
-      "opponent": "Cobalt Athletic",
+      "opponent": "Northstar United",
       "venue": "A",
       "score": "2-2",
       "outcome": "D",
@@ -890,7 +890,7 @@
     {
       "team_id": "cobalt",
       "date": "2026-10-08",
-      "opponent": "Aurora City",
+      "opponent": "Rivergate FC",
       "venue": "H",
       "score": "3-1",
       "outcome": "W",
@@ -900,7 +900,7 @@
     {
       "team_id": "cobalt",
       "date": "2026-10-07",
-      "opponent": "Northstar United",
+      "opponent": "Aurora City",
       "venue": "A",
       "score": "1-0",
       "outcome": "W",
@@ -910,7 +910,7 @@
     {
       "team_id": "cobalt",
       "date": "2026-10-06",
-      "opponent": "Rivergate FC",
+      "opponent": "Northstar United",
       "venue": "H",
       "score": "2-2",
       "outcome": "D",

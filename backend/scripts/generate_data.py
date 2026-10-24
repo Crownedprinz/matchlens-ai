@@ -14,8 +14,9 @@ h2h=[]
 for i, scores in enumerate([(2,1),(1,1),(0,2),(3,2),(1,0)]): h2h.append({"date":f"2026-0{i+5}-12","home_team_id":"aurora" if i%2==0 else "northstar","away_team_id":"northstar" if i%2==0 else "aurora","home_score":scores[0],"away_score":scores[1]})
 form=[]
 for tid in strength:
+    opponents = [team for team in teams if team["id"] != tid]
     for i in range(5):
-        gf=(i+len(tid))%3+1; ga=(i*2+len(tid))%3; form.append({"team_id":tid,"date":f"2026-10-{10-i:02d}","opponent":teams[(i+len(tid))%4]["name"],"venue":"H" if i%2==0 else "A","score":f"{gf}-{ga}","outcome":"W" if gf>ga else "D" if gf==ga else "L","goals_for":gf,"goals_against":ga})
+        gf=(i+len(tid))%3+1; ga=(i*2+len(tid))%3; opponent=opponents[(i+len(tid))%len(opponents)]; form.append({"team_id":tid,"date":f"2026-10-{10-i:02d}","opponent":opponent["name"],"venue":"H" if i%2==0 else "A","score":f"{gf}-{ga}","outcome":"W" if gf>ga else "D" if gf==ga else "L","goals_for":gf,"goals_against":ga})
 events=[]
 def ev(i, minute, typ, tid, pid, desc, related=None): events.append({"id":f"event-{i}","match_id":"match-001","minute":minute,"event_type":typ,"team_id":tid,"player_id":pid,"related_player_id":related,"description":desc})
 ev(1,3,"Pass","aurora","aurora-p2","Kade finds Hart between the lines.")

@@ -102,11 +102,16 @@ The backend accepts comma-separated `CORS_ORIGINS` and limits `/api/analysis` to
 Build deployment artifacts without creating Azure resources:
 
 ```bash
-cd frontend && npm run build
+cd frontend
+cp .env.production.example .env.production
+# Replace NEXT_PUBLIC_API_URL with the deployed FastAPI /api URL.
+npm run build
 cd ../backend && docker build -t matchlens-api .
 ```
 
-The frontend can be connected to Azure Static Web Apps using the generated `frontend/out` directory. The backend Dockerfile is ready for Azure Container Apps and listens on `$PORT`, with synthetic `data/demo.json` included. No public URL or deployment is claimed by this repository.
+The production export must be built with `NEXT_PUBLIC_API_URL` set; the build fails closed when it is missing. `frontend/out/staticwebapp.config.json` is emitted from `frontend/public/staticwebapp.config.json`, and the exported app must not contain a localhost API URL. Configure the deployed backend's `CORS_ORIGINS` with the exact Static Web Apps origin, for example `https://<app-name>.azurestaticapps.net`, plus any local development origin you need.
+
+The backend Dockerfile includes synthetic `data/demo.json`, listens on `$PORT`, and runs with `AGENT_MODE=mock` by default. Before deployment, smoke-test `/api/health` and one `/api/analysis` request inside the image. No public URL or Azure resource is claimed by this repository.
 
 ## Hackathon pitch
 

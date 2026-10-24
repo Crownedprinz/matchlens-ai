@@ -15,11 +15,16 @@ from app.agents.isolated_diagnostics import build_investigator_handoff, forecast
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
 from scripts.register_foundry_tools import AGENTS, instruction_warnings, repair_investigator_instructions, repair_investigator_output_instructions, repair_insight_instructions, repair_predictor_instructions, tool_schema, proposed
-from app.repositories.synthetic import get_fixture
+from app.repositories.synthetic import data, get_fixture
 client = TestClient(app)
 def test_tools_validate_and_use_real_data():
     result = get_head_to_head(HeadToHeadArgs(match_id="match-001")); assert len(result["records"]) == 5
     forecast = predict_match(PredictionArgs(match_id="match-001")); assert abs(sum(forecast[x] for x in ("home_win_probability","draw_probability","away_win_probability"))-100) < .1
+
+def test_recent_form_never_uses_self_as_opponent():
+    team_names = {team["id"]: team["name"] for team in data()["teams"]}
+    for record in data()["form"]:
+        assert record["opponent"] != team_names[record["team_id"]]
 
 def test_investigator_tool_records_use_canonical_evidence_ids():
     from app.agents.contracts import PlayerStatsArgs, TeamFormArgs
