@@ -3,7 +3,14 @@ from pydantic import BaseModel, Field
 from app.models.domain import Forecast
 Audience = Literal["fan", "analyst", "fantasy"]
 class AnalysisRequest(BaseModel):
-    match_id: str = Field(min_length=1, max_length=80); audience: Audience = "fan"; question: str = Field(min_length=3, max_length=500); minute: int = Field(default=0, ge=0, le=90)
+    match_id: str = Field(min_length=1, max_length=80)
+    audience: Audience = "fan"
+    question: str = Field(min_length=3, max_length=300)
+    minute: int = Field(default=0, ge=0, le=90)
+    mode: Literal["demo", "foundry"] = "demo"
+    access_guid: str | None = Field(default=None, max_length=128)
+class FoundryAccessRequest(BaseModel):
+    access_guid: str = Field(min_length=1, max_length=128)
 class HeadToHeadArgs(BaseModel): match_id: str = Field(min_length=1, max_length=80)
 class MatchContextArgs(BaseModel): match_id: str = Field(min_length=1, max_length=80); minute: int = Field(default=0, ge=0, le=90)
 class TeamFormArgs(BaseModel): match_id: str = Field(min_length=1, max_length=80); team_side: Literal["home", "away"]

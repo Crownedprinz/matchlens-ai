@@ -43,9 +43,9 @@ def test_analysis_mock_is_structured(monkeypatch):
     response = client.post("/api/analysis", json={"match_id":"match-001","audience":"fantasy","question":"Which attacker has the strongest projected return?"})
     body=response.json(); assert response.status_code==200; assert body["mode"]=="mock"; assert body["investigator"]["evidence"]; assert body["predictor"]["forecast"]["home_win_probability"] > 0
 def test_analysis_rejects_bad_input(): assert client.post("/api/analysis", json={"match_id":"nope","audience":"fan","question":"Why?"}).status_code==404
-def test_foundry_mode_does_not_fallback(monkeypatch):
+def test_request_mode_is_explicit_and_does_not_follow_global_foundry_env(monkeypatch):
     monkeypatch.setenv("AGENT_MODE", "foundry"); monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
-    response=client.post("/api/analysis", json={"match_id":"match-001","audience":"fan","question":"Why?"}); assert response.status_code==503; assert "FOUNDRY_PROJECT_ENDPOINT" in response.text
+    response=client.post("/api/analysis", json={"match_id":"match-001","audience":"fan","question":"Why?"}); assert response.status_code==200; assert response.json()["mode"]=="mock"
     monkeypatch.setenv("AGENT_MODE", "mock")
 def test_schema_matches_contract():
     team_schema=tool_schema("get_team_form")["parameters"]; assert "team_side" in team_schema["required"]; assert set(team_schema["properties"]["team_side"]["enum"])=={"home","away"}

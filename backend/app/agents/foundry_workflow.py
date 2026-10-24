@@ -10,6 +10,15 @@ from app.repositories.synthetic import players
 
 class FoundryConfigurationError(RuntimeError): pass
 class FoundryResponseError(RuntimeError): pass
+def _foundry_credential():
+    """Use managed identity in Azure and Azure CLI credentials locally."""
+    from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
+    mode = os.getenv("FOUNDRY_CREDENTIAL_MODE", "azure_cli").lower()
+    if mode == "managed_identity":
+        return ManagedIdentityCredential(client_id=os.getenv("AZURE_CLIENT_ID") or None)
+    if mode == "azure_cli":
+        return AzureCliCredential()
+    raise FoundryConfigurationError("FOUNDRY_CREDENTIAL_MODE must be 'managed_identity' or 'azure_cli'")
 def _result_text(result) -> str:
     text=getattr(result,"text",None)
     if isinstance(text,str): return text
@@ -56,14 +65,13 @@ async def _run_foundry(request: AnalysisRequest) -> AnalysisResponse:
     cfg=_configuration()
     try:
         from agent_framework.foundry import FoundryAgent
-        from azure.identity.aio import AzureCliCredential
     except ImportError as exc: raise FoundryConfigurationError("Install requirements-foundry.txt to use AGENT_MODE=foundry") from exc
     from app.agents.foundry_tools import FOUNDRY_FUNCTIONS
     http_timeout=float(os.getenv("FOUNDRY_TIMEOUT_SECONDS","60"))
     validation_retries=int(os.getenv("FOUNDRY_VALIDATION_RETRIES", "1"))
     if validation_retries < 0:
         raise FoundryConfigurationError("FOUNDRY_VALIDATION_RETRIES must be zero or greater")
-    credential=AzureCliCredential(); common={"project_endpoint":cfg["endpoint"],"credential":credential,"timeout":http_timeout}
+    credential=_foundry_credential(); common={"project_endpoint":cfg["endpoint"],"credential":credential,"timeout":http_timeout}
     def make(role):
         item=cfg[role]; tool_names={"investigator":["get_head_to_head","get_team_form","get_player_stats","get_match_context"],"predictor":["predict_match","predict_player","get_model_explanation"],"insight":[]}[role]
         agent = FoundryAgent(**common,agent_name=item["name"],agent_version=item["version"],tools=[FOUNDRY_FUNCTIONS[name] for name in tool_names])

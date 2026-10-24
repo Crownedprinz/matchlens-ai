@@ -66,6 +66,22 @@ The setup script does not run automatically and never provisions Azure resources
 
 The evaluation prompts are in `backend/evaluations/analysis_questions.json`. They are local fixtures only; no live Foundry evaluation or trace has been claimed.
 
+## Experience Microsoft Foundry Live
+
+The public site defaults to **Demo Mode**. Judges can intentionally opt into the real, server-side Investigator → Predictor → Insight workflow by selecting **Microsoft Foundry Live**, opening the GitHub access guide, and entering this publicly shared demo GUID:
+
+```text
+B106165E-873C-4007-B035-471F7BBAA07E
+```
+
+This GUID is an opt-in demo gate, not secure authentication or identity verification. It is never placed in a URL or frontend build output. The public backend must separately have `FOUNDRY_PUBLIC_ENABLED=true`, the matching `FOUNDRY_PUBLIC_ACCESS_GUID`, and the pinned Foundry versions. Until those settings are present, Demo Mode remains the only available mode.
+
+Public Live mode is restricted to the verified `match-001` fixture by default, uses the existing per-IP analysis rate limiter, limits questions to 300 characters, and performs no automatic retries. Set `FOUNDRY_PUBLIC_ENABLED=false` to shut off live inference without affecting Demo Mode.
+
+The live response identifies the actual execution mode and retains Investigator evidence IDs, Predictor values and player projections, Insight limitations, agent versions, and Python tool provenance. All data remains synthetic and Foundry explanations still require human review. Because the access GUID is intentionally public, this rate limiter is a practical demo safeguard rather than strong authentication or a hard global spending cap.
+
+Production requires the Container App system-assigned managed identity to have only the Foundry **Foundry Agent Consumer** role at the project or agent scope. The runtime does not need Owner, Contributor, or Foundry project-management permissions. Microsoft documents Foundry Agent Consumer as the least-privilege role for invoking agent endpoints ([RBAC guidance](https://learn.microsoft.com/en-us/azure/ai-foundry/concepts/rbac-ai-foundry)) and recommends a specific managed identity credential in production ([Agent Framework Foundry guidance](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/agent-services/foundry)).
+
 For an isolated Investigator diagnostic, use the opt-in script below. It makes no network call unless `--confirm-live` is explicitly supplied, and defaults to one bounded attempt with a 30-second timeout:
 
 ```bash
