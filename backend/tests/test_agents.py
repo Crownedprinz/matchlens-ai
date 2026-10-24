@@ -11,7 +11,7 @@ from app.agents.foundry_tools import FOUNDRY_FUNCTIONS, foundry_get_head_to_head
 from app.agents.schema import normalize_foundry_schema
 from app.agents.provenance import agent_context, begin, calls
 from app.agents.foundry_workflow import FoundryResponseError, _text, reconcile_forecast
-from app.agents.diagnostics import foundry_request_route, safe_remote_error_metadata
+from app.agents.diagnostics import exception_chain, foundry_request_route, safe_remote_error_metadata
 from app.agents.isolated_diagnostics import build_investigator_handoff, forecast_mismatches, insight_check, insight_report, parse_insight_handoff, parse_investigator_handoff, parse_prediction_handoff, required_tool_verification
 from app.agents.validation import validate_evidence
 from app.agents.contracts import EvidenceItem, InvestigatorHandoff
@@ -165,6 +165,67 @@ def test_remote_error_metadata_keeps_status_code_and_request_id_without_headers(
     assert metadata["request_id"] == "request-123"
     assert "authorization" not in json.dumps(metadata).lower()
     assert "secret" not in json.dumps(metadata)
+
+def _fake_permission_error():
+    class Response:
+        status_code=403
+        headers={"x-ms-request-id":"safe-request-123"}
+    class PermissionDeniedError(Exception):
+        status_code=403
+        code="PermissionDenied"
+        response=Response()
+        body={"error":{"code":"PermissionDenied"}}
+    return PermissionDeniedError("Bearer secret prompt text")
+
+def test_exception_chain_handles_inner_exception_cause_context_and_args():
+    inner=_fake_permission_error()
+    inner_wrapper=Exception("inner wrapper"); inner_wrapper.inner_exception=inner
+    cause_wrapper=Exception("cause wrapper")
+    cause_wrapper.__cause__=inner
+    context_wrapper=Exception("context wrapper")
+    context_wrapper.__context__=inner
+    args_wrapper=Exception("args wrapper", inner)
+    assert inner in list(exception_chain(inner_wrapper))
+    assert inner in list(exception_chain(cause_wrapper))
+    assert inner in list(exception_chain(context_wrapper))
+    assert inner in list(exception_chain(args_wrapper))
+
+def test_wrapped_permission_denied_prefers_root_http_details():
+    from agent_framework.exceptions import ChatClientException
+    inner=_fake_permission_error()
+    wrapped=ChatClientException("service failed", inner_exception=inner)
+    metadata=safe_remote_error_metadata(wrapped)
+    assert metadata == {
+        "outer_exception_type":"ChatClientException",
+        "root_exception_type":"PermissionDeniedError",
+        "http_status":403,
+        "error_code":"PermissionDenied",
+        "request_id":"safe-request-123",
+    }
+    assert "Bearer" not in json.dumps(metadata)
+    assert "prompt" not in json.dumps(metadata)
+
+def test_exception_metadata_handles_missing_and_malformed_details_without_fabrication():
+    class Empty(Exception): pass
+    empty=safe_remote_error_metadata(Empty("secret"))
+    assert empty["http_status"] is None
+    assert empty["error_code"] is None
+    assert empty["request_id"] is None
+
+    class BadHeaders(Exception):
+        request_id="not safe!*"
+        body={"error":{"message":"do not expose"}}
+    bad=safe_remote_error_metadata(BadHeaders())
+    assert bad["request_id"] is None
+    assert bad["error_code"] is None
+
+def test_exception_chain_is_cycle_safe_and_deduplicated():
+    first=Exception("first")
+    second=Exception("second", first)
+    first.__context__=second
+    chain=list(exception_chain(first))
+    assert chain.count(first) == 1
+    assert chain.count(second) == 1
 
 def test_permission_denied_is_reported_with_http_context_and_not_retried():
     class Response:
